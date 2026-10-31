@@ -28,9 +28,7 @@ def test_peaks(p, clean_frame):
     r, _, gap, npw = clean_frame
     S = detection.peaks_statistic(r, p)
     assert S.size == detection.preamble_correlation(r, p).size
-    assert (
-        detection.detect_start(S, detection.peaks_threshold(npw, 1e-3, p), 8 * p.M) == gap * p.M
-    )
+    assert detection.detect_start(S, detection.peaks_threshold(npw, 1e-3, p), 8 * p.M) == gap * p.M
     assert detection.detect_peaks(r, p, npw, 1e-3) == gap * p.M
 
 

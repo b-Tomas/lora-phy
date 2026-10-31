@@ -30,7 +30,7 @@ def noise_from_SNR(c: np.ndarray, SNR_dB: float) -> np.ndarray:
     # Convertir SNR de dB a lineal
     SNR_linear = 10 ** (SNR_dB / 10)
 
-    # Calcular la potencia del ruido: SNR = signal_power / noise_power => noise_power = signal_power / SNR
+    # Potencia del ruido: SNR = signal_power / noise_power => noise_power = signal_power / SNR
     z_power = power(c) / SNR_linear
 
     # La potencia del ruido gaussiano es igual a la varianza de la distribución normal
