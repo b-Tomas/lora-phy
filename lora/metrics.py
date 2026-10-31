@@ -68,3 +68,29 @@ def frame_error(r: np.ndarray, start: int | None, symbols_tx: np.ndarray, p: LoR
     # Basta un símbolo incorrecto para descartar la trama
     # Comparar símbolos equivale a comparar bits: el codificador es una biyección
     return not np.array_equal(demodulator(payload, p), symbols_tx)
+
+
+def roc(statistic_h0: np.ndarray, statistic_h1: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Curva ROC empírica a partir de realizaciones de un estadístico bajo cada hipótesis.
+
+    Cada valor observado del estadístico es un umbral posible. Se decide H1 si el estadístico
+    alcanza el umbral.
+
+    Args:
+        statistic_h0 (np.ndarray): Realizaciones del estadístico bajo H0.
+        statistic_h1 (np.ndarray): Realizaciones del estadístico bajo H1.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: P_FA y P_D para cada umbral, de mayor a menor umbral.
+    """
+
+    # Umbrales de mayor a menor. Un umbral infinito agrega el punto (0, 0): nunca se decide H1
+    thresholds = np.concatenate(
+        [[np.inf], np.unique(np.concatenate([statistic_h0, statistic_h1]))[::-1]]
+    )
+
+    # Fracción de realizaciones que alcanzan cada umbral (filas: realizaciones, columnas: umbrales)
+    P_FA = np.mean(statistic_h0[:, None] >= thresholds, axis=0)
+    P_D = np.mean(statistic_h1[:, None] >= thresholds, axis=0)
+
+    return P_FA, P_D
