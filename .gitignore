@@ -1,3 +1,6 @@
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+
+# Paper de referencia (copyright IEEE): no se versiona
+Frequency_Shift_Chirp_Modulation_The_LoRa_Modulation.pdf
