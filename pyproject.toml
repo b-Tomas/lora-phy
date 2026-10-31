@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lora"
+version = "0.1.0"
+description = "Modelo de la modulación LoRa (FSCM) basado en Vangelista (2017)"
+requires-python = ">=3.10"
+dependencies = ["numpy", "matplotlib"]
+
+[project.optional-dependencies]
+dev = ["jupyter", "pytest"]
+
+[tool.setuptools]
+packages = ["lora"]
