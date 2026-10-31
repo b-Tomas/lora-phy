@@ -14,16 +14,18 @@ Requiere Python 3.10 o posterior.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt  # Instala el paquete lora en modo editable, Jupyter y pytest
+pip install -r requirements.txt  # Instala el paquete lora en modo editable, Jupyter, pytest y ruff
 jupyter lab LoRa.ipynb
 ```
 
 Los cambios en `lora/` se ven en el notebook después de reiniciar el kernel.
 
-### Tests
+### Tests y linting
 
 ```bash
 pytest
+ruff check .     # Linting (paquete, tests y notebook)
+ruff format .    # Formato
 ```
 
 ## Paquete `lora`

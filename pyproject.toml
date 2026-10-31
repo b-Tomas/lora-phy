@@ -10,7 +10,14 @@ requires-python = ">=3.10"
 dependencies = ["numpy", "matplotlib"]
 
 [project.optional-dependencies]
-dev = ["jupyter", "pytest"]
+dev = ["jupyter", "pytest", "ruff"]
 
 [tool.setuptools]
 packages = ["lora"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+extend-select = ["I"]  # Orden de los imports

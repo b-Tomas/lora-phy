@@ -2,11 +2,11 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-from matplotlib.figure import Figure  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.figure import Figure
 
-from lora import LoRaParams, channel, detection, plots, rng, rx, simulation, tx  # noqa: E402
+from lora import LoRaParams, channel, detection, plots, rng, rx, simulation, tx
 
 
 def test_every_plot_returns_a_figure():

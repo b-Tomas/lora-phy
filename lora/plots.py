@@ -64,7 +64,7 @@ def _annotate_frame(ax: Axes, gap: int, p: LoRaParams, n_samples: int) -> None:
             name,
             ha="center",
             transform=ax.get_xaxis_transform(),
-            bbox=dict(facecolor="w", alpha=0.8),
+            bbox={"facecolor": "w", "alpha": 0.8},
         )
     ax.set_xlim(0, n_samples)  # Mismo eje en todos los gráficos, incluyendo el silencio
 
@@ -451,9 +451,9 @@ def compare_methods(
     """
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    for method in flat:
+    for method, metric_flat in flat.items():
         name, color = _METHODS[method]
-        ax.plot(SNRs_dB, flat[method], color=color, marker="o", label=f"{name}, plano")
+        ax.plot(SNRs_dB, metric_flat, color=color, marker="o", label=f"{name}, plano")
         ax.plot(
             SNRs_dB,
             sel[method],
