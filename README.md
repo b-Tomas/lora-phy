@@ -9,12 +9,19 @@ paquete [`lora`](lora/), que el notebook importa.
 
 ## Uso
 
-Requiere Python 3.10 o posterior.
+Requiere Python 3.10 o posterior. Con [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv sync --extra dev        # Crea .venv e instala el paquete lora en modo editable, Jupyter, pytest y ruff
+uv run jupyter lab LoRa.ipynb
+```
+
+Sin uv:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt  # Instala el paquete lora en modo editable, Jupyter, pytest y ruff
+pip install -r requirements.txt
 jupyter lab LoRa.ipynb
 ```
 
@@ -23,23 +30,23 @@ Los cambios en `lora/` se ven en el notebook después de reiniciar el kernel.
 ### Tests y linting
 
 ```bash
-pytest
-ruff check .     # Linting (paquete, tests y notebook)
-ruff format .    # Formato
+uv run pytest
+uv run ruff check .     # Linting (paquete, tests y notebook)
+uv run ruff format .    # Formato
 ```
 
 ## Paquete `lora`
 
-| Módulo                                   | Contenido                                                          |
-| ---------------------------------------- | ------------------------------------------------------------------ |
-| [`params`](lora/params.py)               | `LoRaParams` (SF, B, preámbulo) y semilla global (`seed`, `rng`)   |
-| [`tx`](lora/tx.py)                       | Codificador, modulador (Ec. 2) y preámbulo                         |
-| [`channel`](lora/channel.py)             | AWGN, respuesta al impulso del canal y transmisión de una trama   |
-| [`rx`](lora/rx.py)                       | Demodulador (Ec. 16) y decodificador                               |
-| [`metrics`](lora/metrics.py)             | Potencia, BER, error de trama y curva ROC                          |
-| [`detection`](lora/detection.py)         | Detectores de trama y umbrales de Neyman-Pearson                   |
-| [`simulation`](lora/simulation.py)       | Simulaciones Monte Carlo: BER, tramas, ROC, falsas alarmas y costo |
-| [`plots`](lora/plots.py)                 | Gráficos del notebook                                              |
+| Módulo                             | Contenido                                                          |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| [`params`](lora/params.py)         | `LoRaParams` (SF, B, preámbulo) y semilla global (`seed`, `rng`)   |
+| [`tx`](lora/tx.py)                 | Codificador, modulador y preámbulo                                 |
+| [`channel`](lora/channel.py)       | AWGN, respuesta al impulso del canal y transmisión de una trama    |
+| [`rx`](lora/rx.py)                 | Demodulador y decodificador                                        |
+| [`metrics`](lora/metrics.py)       | Potencia, BER, error de trama y curva ROC                          |
+| [`detection`](lora/detection.py)   | Detectores de trama y umbrales de Neyman-Pearson                   |
+| [`simulation`](lora/simulation.py) | Simulaciones Monte Carlo: BER, tramas, ROC, falsas alarmas y costo |
+| [`plots`](lora/plots.py)           | Gráficos del notebook                                              |
 
 ## Autores
 
