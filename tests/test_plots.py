@@ -51,6 +51,9 @@ def test_every_plot_returns_a_figure():
         ),
         plots.start_vs_snr(snrs, by_method["full"], by_method["peaks"], "Título"),
         plots.compare_methods(snrs, by_method, by_method, "FER", "Título", xlim=(-15, -4)),
+        plots.compare_methods(snrs, by_method, by_method, "FER", "Título", logy=True),
+        plots.fer_sweep(np.array([7, 8]), {"Canal plano": np.array([0.1, 0.0])}, "SF", "Título"),
+        plots.fer_sweep(np.array([1, 2]), {"Canal plano": np.array([0.1, 0.2])}, "N", "T", True),
         plots.false_alarms(
             simulation.measured_false_alarms(p, 50, np.logspace(-1, -2, 3)), 50, Ks=(1, 2)
         ),

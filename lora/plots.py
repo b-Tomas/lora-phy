@@ -439,6 +439,7 @@ def compare_methods(
     ylabel: str,
     title: str,
     xlim: tuple[float, float] | None = None,
+    logy: bool = False,
 ) -> Figure:
     """Compara una métrica de los métodos: línea llena en el canal plano, punteada en el selectivo.
 
@@ -450,6 +451,7 @@ def compare_methods(
         ylabel (str): Nombre de la métrica.
         title (str): Título del gráfico.
         xlim (tuple[float, float] | None): Rango de SNR a mostrar. None muestra todo.
+        logy (bool): Eje y logarítmico. Los puntos en 0 no se dibujan.
 
     Returns:
         Figure: Figura con las curvas.
@@ -470,8 +472,39 @@ def compare_methods(
         )
     if xlim is not None:
         ax.set_xlim(xlim)
+    if logy:
+        ax.set_yscale("log", nonpositive="mask")
     ax.set(title=title, xlabel="SNR (dB)", ylabel=ylabel)
-    ax.grid(True)
+    ax.grid(True, which="both" if logy else "major")
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1))  # Afuera: no tapa las curvas
+    return fig
+
+
+def fer_sweep(
+    x: np.ndarray, fer: dict[str, np.ndarray], xlabel: str, title: str, logx: bool = False
+) -> Figure:
+    """FER en escala logarítmica en función de un parámetro del sistema, una curva por canal.
+
+    Args:
+        x (np.ndarray): Valores del parámetro.
+        fer (dict[str, np.ndarray]): FER para cada valor de `x`, por nombre del canal.
+        xlabel (str): Nombre del parámetro.
+        title (str): Título del gráfico.
+        logx (bool): Eje x logarítmico (en base 2).
+
+    Returns:
+        Figure: Figura con las curvas. Los puntos con FER = 0 no se dibujan.
+    """
+
+    fig, ax = plt.subplots()
+    for name, f in fer.items():
+        ax.plot(x, f, marker="o", label=name)
+    ax.set_yscale("log", nonpositive="mask")
+    if logx:
+        ax.set_xscale("log", base=2)
+    ax.set_xticks(x, [str(v) for v in x])
+    ax.set(title=title, xlabel=xlabel, ylabel="FER")
+    ax.grid(True, which="both")
     ax.legend()
     return fig
 

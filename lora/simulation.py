@@ -91,6 +91,7 @@ def frame_rates(
     simulations: int,
     num_symbols: int = 16,
     gap: int = 5,
+    min_errors: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Simula tramas con un detector y estima el inicio correcto y el FER para cada SNR.
 
@@ -101,9 +102,12 @@ def frame_rates(
         h (np.ndarray): Respuesta al impulso del canal.
         p (LoRaParams): Parámetros del sistema.
         P_FA (float): Probabilidad de falsa alarma por símbolo.
-        simulations (int): Tramas simuladas por SNR.
+        simulations (int): Tramas simuladas por SNR. Con `min_errors`, el máximo.
         num_symbols (int): Símbolos del payload por trama.
         gap (int): Símbolos de silencio antes de la trama.
+        min_errors (int | None): Si se indica, cada SNR termina al juntar esa cantidad de tramas
+            con error. Donde el FER es alto alcanzan pocas tramas, y las demás se gastan donde
+            es bajo.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: Fracción de tramas con inicio correcto y FER, para cada SNR.
@@ -113,14 +117,18 @@ def frame_rates(
     for i, SNR_dB in enumerate(SNRs_dB):
         # Potencia del ruido por muestra (sigma^2), que el receptor conoce
         npw = noise_power(p, SNR_dB)
-        for _ in range(simulations):
+        frames = 0
+        while frames < simulations and (min_errors is None or fer[i] < min_errors):
             symbols_tx = params.rng.integers(0, p.M, size=num_symbols)
             r = transmit_frame(symbols_tx, gap, p, SNR_dB, h)
             start = detect(r, p, npw, P_FA)
             p_start[i] += start == gap * p.M
             fer[i] += frame_error(r, start, symbols_tx, p)
+            frames += 1
+        p_start[i] /= frames
+        fer[i] /= frames
 
-    return p_start / simulations, fer / simulations
+    return p_start, fer
 
 
 # --- ROC y falsas alarmas --------------------------------------------------------------------
