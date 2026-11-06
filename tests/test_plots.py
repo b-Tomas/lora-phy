@@ -36,7 +36,7 @@ def test_every_plot_returns_a_figure():
         plots.full_preamble_detection(
             T_clean,
             T,
-            detection.time_threshold(npw, P_FA / p.M, p),
+            detection.threshold("full", p, npw, P_FA),
             gap * p.M,
             gap,
             p,
@@ -44,16 +44,18 @@ def test_every_plot_returns_a_figure():
             SNR_dB,
         ),
         plots.peaks_detection(
-            y, S, detection.peaks_threshold(npw, P_FA / p.M, p), None, gap, p, P_FA, SNR_dB
+            y, S, detection.threshold("peaks", p, npw, P_FA), None, gap, p, P_FA, SNR_dB
         ),
         plots.freq_detection(
             rx.demodulator(r[: r.size // p.M * p.M], p), V, 4, gap, gap, p, P_FA, SNR_dB
         ),
         plots.start_vs_snr(snrs, by_method["full"], by_method["peaks"], "Título"),
         plots.compare_methods(snrs, by_method, by_method, "FER", "Título", xlim=(-15, -4)),
-        plots.false_alarms(simulation.measured_false_alarms(p, 50, np.logspace(-1, -2, 3)), 50),
-        plots.roc({-14: simulation.roc_curves(-14, p, 10, axis, P_FA)}, axis, P_FA),
-        plots.cpu_times(np.array([7, 8]), [{"full": 2e-3, "peaks": 5e-4, "freq": 1e-4}] * 2),
+        plots.false_alarms(
+            simulation.measured_false_alarms(p, 50, np.logspace(-1, -2, 3)), 50, Ks=(1, 2)
+        ),
+        plots.roc({-14: simulation.roc_curves(p, -14, 10, axis, P_FA)}, axis, P_FA),
+        plots.cpu_times([7, 8], [{"full": 2e-3, "peaks": 5e-4, "freq": 1e-4}] * 2),
     ]
 
     assert all(isinstance(fig, Figure) for fig in figures)

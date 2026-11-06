@@ -15,6 +15,11 @@ dev = ["jupyter", "pytest", "ruff"]
 [tool.setuptools]
 packages = ["lora"]
 
+[tool.pyright]
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+
 [tool.ruff]
 line-length = 100
 extend-exclude = ["docs"]

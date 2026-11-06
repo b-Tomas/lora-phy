@@ -41,9 +41,10 @@ def test_instantaneous_frequency():
     assert f[p.M + 1] == 0  # Se repliega al llegar a B
 
 
+@pytest.mark.parametrize("n_downchirps", [0, 1, 2.25, 2.3])
 @pytest.mark.parametrize("SF", [7, 9])
-def test_preamble_len(SF):
-    q = LoRaParams(SF, 125e3)
+def test_preamble_len(SF, n_downchirps):
+    q = LoRaParams(SF, 125e3, n_downchirps=n_downchirps)
     assert tx.preamble(q).size == q.preamble_len
 
 

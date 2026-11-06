@@ -2,8 +2,9 @@ import dataclasses
 from math import factorial
 
 import numpy as np
+import pytest
 
-from lora import detection, metrics
+from lora import LoRaParams, channel, detection, metrics, rng
 
 
 def test_full(p, clean_frame):
@@ -49,8 +50,50 @@ def test_ideal_detector_gap(p, clean_frame):
     assert detection.ideal_detector(gap)(r, p, npw, 1e-3) == gap * p.M
 
 
-def test_detectors_keys():
-    assert set(detection.DETECTORS) == {"full", "peaks", "freq"}
+def test_threshold_per_symbol(p):
+    # P_FA por símbolo: en el tiempo se prueban M muestras por símbolo, en frecuencia una ventana
+    npw = 2.0
+    assert detection.threshold("full", p, npw, 1e-3) == detection.time_threshold(npw, 1e-3 / p.M, p)
+    assert detection.threshold("peaks", p, npw, 1e-3) == detection.peaks_threshold(
+        npw, 1e-3 / p.M, p
+    )
+    assert detection.threshold("freq", p, npw, 1e-3) == detection.freq_threshold(1e-3, p)
+
+
+@pytest.mark.parametrize(
+    "statistic, n_samples",
+    [
+        (detection.upchirp_correlation, 127),
+        (detection.preamble_correlation, 8 * 128 - 1),
+        (detection.peaks_statistic, 8 * 128 - 1),
+        (detection.preamble_zero_count, 8 * 128 - 1),
+    ],
+)
+def test_short_signal_rejected(p, statistic, n_samples):
+    # Más corta que la plantilla, np.correlate intercambiaría los argumentos
+    with pytest.raises(AssertionError):
+        statistic(np.zeros(n_samples, dtype=complex), p)
+
+
+@pytest.mark.parametrize(
+    "q",
+    [
+        LoRaParams(9, 125e3),
+        LoRaParams(7, 125e3, n_downchirps=1),
+        LoRaParams(7, 125e3, n_downchirps=2.3),
+        LoRaParams(7, 125e3, n_upchirps=4),
+    ],
+)
+@pytest.mark.parametrize(
+    "detect", [detection.detect_full, detection.detect_peaks, detection.detect_freq]
+)
+def test_detectors_other_params(q, detect):
+    symbols = rng.integers(0, q.M, 4)
+    gap = 2
+    r = channel.transmit_frame(symbols, gap, q, 100, channel.FLAT)
+    start = detect(r, q, channel.noise_power(q, 100), 1e-3)
+    assert start == gap * q.M
+    assert not metrics.frame_error(r, start, symbols, q)
 
 
 def test_roc():

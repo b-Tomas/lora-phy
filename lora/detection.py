@@ -7,7 +7,8 @@ Tres métodos, con la misma probabilidad de falsa alarma por símbolo:
 3. Demodulación del preámbulo (frecuencia, decisión dura por ventana): `detect_freq`.
 
 Todos los detectores tienen la firma `detect(r, p, noise_power, P_FA)` (`Detector`) y devuelven
-la muestra de inicio de la trama, o None si no la detectan.
+la muestra de inicio de la trama, o None si no la detectan. `threshold` da el umbral de cada método
+para una P_FA por símbolo.
 """
 
 from collections.abc import Callable
@@ -34,7 +35,7 @@ def detect_start(statistic: np.ndarray, threshold: float, span: int) -> int | No
         statistic (np.ndarray): Estadístico de detección de cada posición (muestra o ventana).
         threshold (float): Umbral de decisión.
         span (int): Posiciones donde se busca el máximo después del cruce: el largo de los
-            up-chirps del preámbulo, en ventanas (8) o en muestras (8 * 2^SF).
+            up-chirps del preámbulo, en ventanas (n_upchirps) o en muestras (n_upchirps * 2^SF).
 
     Returns:
         int | None: Posición de inicio de la trama, o None si no se detecta.
@@ -64,6 +65,9 @@ def upchirp_correlation(r: np.ndarray, p: LoRaParams) -> np.ndarray:
         np.ndarray: Correlación y[k] para cada muestra k donde entra el up-chirp completo.
     """
 
+    # Más corta que la plantilla, np.correlate intercambiaría los argumentos
+    assert r.size >= p.M, "La señal es más corta que un símbolo"
+
     upchirp = modulator(np.zeros(1, dtype=int), p)
 
     # np.correlate conjuga el segundo argumento: y[k] = sum_i r[k + i] * conj(upchirp[i])
@@ -86,6 +90,9 @@ def preamble_correlation(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     Returns:
         np.ndarray: Estadístico T[k] para cada muestra k donde entra el preámbulo completo.
     """
+
+    # Más corta que la plantilla, np.correlate intercambiaría los argumentos
+    assert r.size >= p.n_upchirps * p.M, "La señal es más corta que los up-chirps del preámbulo"
 
     template = modulator(np.zeros(p.n_upchirps, dtype=int), p)
 
@@ -124,8 +131,7 @@ def detect_full(r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float) -
         int | None: Muestra de inicio de la trama, o None si no se detecta.
     """
 
-    # Se prueban M muestras por símbolo: P_FA / M en cada una
-    eta = time_threshold(noise_power, P_FA / p.M, p)
+    eta = threshold("full", p, noise_power, P_FA)
 
     # El máximo se busca en el largo de los up-chirps del preámbulo
     return detect_start(preamble_correlation(r, p), eta, p.n_upchirps * p.M)
@@ -147,6 +153,8 @@ def peaks_statistic(r: np.ndarray, p: LoRaParams) -> np.ndarray:
         np.ndarray: Estadístico S[k] para cada muestra k donde entran los `p.n_upchirps` picos.
     """
 
+    assert r.size >= p.n_upchirps * p.M, "La señal es más corta que los up-chirps del preámbulo"
+
     # Energía de cada pico: el módulo se toma antes de sumar (no coherente)
     y2 = np.abs(upchirp_correlation(r, p)) ** 2
 
@@ -154,7 +162,10 @@ def peaks_statistic(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     n_valid = y2.size - (p.n_upchirps - 1) * p.M
 
     # Suma de los picos y[k + n M], desplazando el arreglo un símbolo por cada pico
-    return sum(y2[n * p.M : n * p.M + n_valid] for n in range(p.n_upchirps))
+    # start: la suma arranca de un arreglo de ceros, no del entero 0
+    return sum(
+        (y2[n * p.M : n * p.M + n_valid] for n in range(p.n_upchirps)), start=np.zeros(n_valid)
+    )
 
 
 def peaks_threshold(noise_power: float, P_FA: float, p: LoRaParams) -> float:
@@ -202,8 +213,7 @@ def detect_peaks(r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float) 
         int | None: Muestra de inicio de la trama, o None si no se detecta.
     """
 
-    # Se prueban M muestras por símbolo: P_FA / M en cada una
-    eta_S = peaks_threshold(noise_power, P_FA / p.M, p)
+    eta_S = threshold("peaks", p, noise_power, P_FA)
 
     # El máximo se busca en el largo de los up-chirps del preámbulo
     return detect_start(peaks_statistic(r, p), eta_S, p.n_upchirps * p.M)
@@ -226,6 +236,9 @@ def preamble_zero_count(r: np.ndarray, p: LoRaParams) -> np.ndarray:
         np.ndarray: Estadístico V[m] (ventanas con símbolo 0) para cada ventana m donde entra el
         preámbulo completo.
     """
+
+    # Más corta que el preámbulo, np.convolve intercambiaría los argumentos
+    assert r.size >= p.n_upchirps * p.M, "La señal es más corta que los up-chirps del preámbulo"
 
     # Demodular cada ventana de M muestras (sincronía de símbolo). Se descarta el resto
     symbols_rx = demodulator(r[: r.size // p.M * p.M], p)
@@ -291,10 +304,39 @@ def detect_freq(r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float) -
         int | None: Muestra de inicio de la trama, o None si no se detecta.
     """
 
-    start = detect_start(preamble_zero_count(r, p), freq_threshold(P_FA, p), p.n_upchirps)
+    K = threshold("freq", p, noise_power, P_FA)
+    start = detect_start(preamble_zero_count(r, p), K, p.n_upchirps)
 
     # La ventana m empieza en la muestra m * 2^SF
     return None if start is None else start * p.M
+
+
+# --- Umbral por símbolo ----------------------------------------------------------------------
+
+
+def threshold(method: str, p: LoRaParams, noise_power: float, P_FA: float) -> float:
+    """Umbral de Neyman-Pearson de un método para una probabilidad de falsa alarma por símbolo.
+
+    En el tiempo se prueban 2^SF muestras por símbolo, así que cada muestra usa P_FA / 2^SF: misma
+    tasa de falsas alarmas que un test por símbolo. En frecuencia hay un test por ventana.
+
+    Args:
+        method (str): "full" (preámbulo completo), "peaks" (búsqueda de picos) o "freq"
+            (demodulación del preámbulo).
+        p (LoRaParams): Parámetros del sistema.
+        noise_power (float): Potencia del ruido por muestra (sigma^2). No se usa en "freq".
+        P_FA (float): Probabilidad de falsa alarma por símbolo.
+
+    Returns:
+        float: Umbral del estadístico del método.
+    """
+
+    if method == "full":
+        return time_threshold(noise_power, P_FA / p.M, p)
+    if method == "peaks":
+        return peaks_threshold(noise_power, P_FA / p.M, p)
+    assert method == "freq", f"Método desconocido: {method}"
+    return freq_threshold(P_FA, p)
 
 
 # --- Referencia ------------------------------------------------------------------------------
@@ -316,7 +358,3 @@ def ideal_detector(gap: int) -> Detector:
         return gap * p.M
 
     return detect
-
-
-# Detectores por clave de método. Las mismas claves se usan en `simulation` y `plots`
-DETECTORS: dict[str, Detector] = {"full": detect_full, "peaks": detect_peaks, "freq": detect_freq}

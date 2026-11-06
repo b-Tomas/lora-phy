@@ -37,9 +37,12 @@ def encoder(bits: np.ndarray, p: LoRaParams) -> np.ndarray:
 
 
 def instantaneous_frequency(symbols: np.ndarray, p: LoRaParams) -> np.ndarray:
-    """Frecuencia instantánea de la señal modulada, según el exponente de Ec. 2.
+    """Frecuencia nominal de la señal modulada, según el exponente de Ec. 2.
 
-    Para cada símbolo n y chip k: f(k) = ((s(nT_s) + k) mod 2^SF) B / 2^SF.
+    Para cada símbolo n y chip k: f(k) = ((s(nT_s) + k) mod 2^SF) B / 2^SF. Es la frecuencia que
+    se lee en Ec. 2, de 0 a B, con fines pedagógicos. No es la derivada de la fase muestreada: con
+    la fase de Ec. 2 esa frecuencia barre de 0 a 2B y, muestreada a B, se repliega (ver la
+    correlación móvil con un up-chirp en el notebook).
 
     Args:
         symbols (np.ndarray): Conjunto de símbolos $s(nT_s)$. 0 <= s < 2**SF.

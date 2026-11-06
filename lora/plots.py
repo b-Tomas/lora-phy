@@ -22,6 +22,9 @@ _METHODS = {
     "ideal": ("Detección ideal", "k"),
 }
 
+# Marcador de cada método en los gráficos de puntos
+_MARKERS = {"full": "s", "peaks": "^", "freq": "o"}
+
 # Muestras por ventana de la FFT de los espectrogramas
 _NFFT = 16
 
@@ -342,7 +345,7 @@ def peaks_detection(
     )
     _detection_marks(axs[1], gap * p.M, start)
     axs[1].set(
-        title=f"Búsqueda de 8 picos: inicio real k={gap * p.M}, detectado k={start} "
+        title=f"Búsqueda de {p.n_upchirps} picos: inicio real k={gap * p.M}, detectado k={start} "
         f"(SNR={SNR_dB} dB)",
         ylabel="$S[k]$",
     )
@@ -356,7 +359,7 @@ def peaks_detection(
 def freq_detection(
     symbols_rx: np.ndarray,
     V: np.ndarray,
-    K: int,
+    K: float,
     start: int | None,
     gap: int,
     p: LoRaParams,
@@ -368,7 +371,7 @@ def freq_detection(
     Args:
         symbols_rx (np.ndarray): Símbolo decidido en cada ventana.
         V (np.ndarray): Estadístico de la demodulación del preámbulo.
-        K (int): Umbral de decisión.
+        K (float): Umbral de decisión (entero: cantidad de ventanas).
         start (int | None): Ventana de inicio detectada (no muestra), o None.
         gap (int): Símbolos de silencio antes de la trama.
         p (LoRaParams): Parámetros del sistema.
@@ -405,13 +408,15 @@ def freq_detection(
 # --- Performance de los detectores -----------------------------------------------------------
 
 
-def start_vs_snr(SNRs_dB: np.ndarray, p_flat: np.ndarray, p_sel: np.ndarray, title: str) -> Figure:
+def start_vs_snr(
+    SNRs_dB: np.ndarray, start_flat: np.ndarray, start_sel: np.ndarray, title: str
+) -> Figure:
     """Probabilidad de detectar el inicio correcto vs SNR de un método, en ambos canales.
 
     Args:
         SNRs_dB (np.ndarray): SNR simulados, en decibelios.
-        p_flat (np.ndarray): P(inicio correcto) en el canal plano.
-        p_sel (np.ndarray): P(inicio correcto) en el canal selectivo en frecuencia.
+        start_flat (np.ndarray): P(inicio correcto) en el canal plano.
+        start_sel (np.ndarray): P(inicio correcto) en el canal selectivo en frecuencia.
         title (str): Título del gráfico.
 
     Returns:
@@ -419,8 +424,8 @@ def start_vs_snr(SNRs_dB: np.ndarray, p_flat: np.ndarray, p_sel: np.ndarray, tit
     """
 
     fig, ax = plt.subplots()
-    ax.plot(SNRs_dB, p_flat, marker="s", label="Canal plano")
-    ax.plot(SNRs_dB, p_sel, marker="o", label="Canal selectivo en frecuencia")
+    ax.plot(SNRs_dB, start_flat, marker="s", label="Canal plano")
+    ax.plot(SNRs_dB, start_sel, marker="o", label="Canal selectivo en frecuencia")
     ax.set(title=title, xlabel="SNR (dB)", ylabel="P(inicio correcto)")
     ax.grid(True)
     ax.legend()
@@ -472,22 +477,28 @@ def compare_methods(
 
 
 def false_alarms(
-    results: dict[str, tuple[np.ndarray, np.ndarray]], num_noise_symbols: int
+    results: dict[str, tuple[np.ndarray, np.ndarray]],
+    num_noise_symbols: int,
+    Ks: tuple[int, ...],
 ) -> Figure:
     """P_FA medida vs pedida de cada método (`simulation.measured_false_alarms`).
 
     Args:
         results (dict[str, tuple[np.ndarray, np.ndarray]]): P_FA pedida y medida por método.
         num_noise_symbols (int): Largo de la señal de ruido, en símbolos.
+        Ks (tuple[int, ...]): Umbrales medidos en frecuencia, los mismos que se pasaron a
+            `measured_false_alarms`. Sus puntos son umbrales enteros, no P_FA pedidas.
 
     Returns:
         Figure: Figura con los puntos y la diagonal.
     """
 
     fig, ax = plt.subplots()
-    for (method, (target, measured)), marker in zip(results.items(), ["s", "^", "o"]):
+    for method, (target, measured) in results.items():
         name, color = _METHODS[method]
-        ax.loglog(target, measured, marker, color=color, label=name)
+        if method == "freq":
+            name += f", K = {', '.join(map(str, Ks))}"
+        ax.loglog(target, measured, _MARKERS[method], color=color, label=name)
     ax.loglog([1e-6, 1], [1e-6, 1], color="k", ls="--", lw=0.8, label="Medida = pedida")
     ax.set(
         title=f"Falsas alarmas en {num_noise_symbols} símbolos de solo ruido",
@@ -539,7 +550,7 @@ def roc(
         ax.set(
             xlim=(P_FA_axis[0], 1),
             ylim=(-0.02, 1.02),
-            title=f"Curva ROC (SNR={SNR_dB} dB)",
+            title=f"Curva ROC (SNR={SNR_dB:g} dB)",
             xlabel="$P_{FA}$ por símbolo",
             ylabel="$P_D$",
         )
@@ -550,11 +561,11 @@ def roc(
     return fig
 
 
-def cpu_times(SFs: np.ndarray, cpu: list[dict[str, float]]) -> Figure:
+def cpu_times(SFs: list[int], cpu: list[dict[str, float]]) -> Figure:
     """Tiempo de CPU por trama de cada método vs SF (`simulation.methods_cpu_time`).
 
     Args:
-        SFs (np.ndarray): Spreading factors medidos.
+        SFs (list[int]): Spreading factors medidos.
         cpu (list[dict[str, float]]): Tiempo de cada método, en segundos, para cada SF.
 
     Returns:

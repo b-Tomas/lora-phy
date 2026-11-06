@@ -53,6 +53,9 @@ def frame_error(r: np.ndarray, start: int | None, symbols_tx: np.ndarray, p: LoR
         bool: True si la trama tiene error.
     """
 
+    # Sin payload no hay nada que comparar: cualquier inicio daría una trama correcta
+    assert symbols_tx.size > 0, "El payload no puede estar vacío"
+
     # Miss: no se detectó el preámbulo, se pierde la trama
     if start is None:
         return True

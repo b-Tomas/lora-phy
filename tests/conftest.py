@@ -1,6 +1,12 @@
 import pytest
 
-from lora import LoRaParams, channel, rng
+from lora import LoRaParams, channel, rng, seed
+
+
+@pytest.fixture(autouse=True)
+def fixed_seed():
+    """Cada test arranca con la misma semilla: no depende de los tests que corrieron antes."""
+    seed(0)
 
 
 @pytest.fixture

@@ -12,11 +12,11 @@ from .channel import FLAT, noise_from_SNR, noise_power, system, transmit_frame
 from .detection import (
     Detector,
     detect_start,
-    freq_threshold,
     peaks_statistic,
     peaks_threshold,
     preamble_correlation,
     preamble_zero_count,
+    threshold,
     time_threshold,
     zero_count_false_alarm,
 )
@@ -163,17 +163,6 @@ def detection_statistics(
     return {method: (np.array(h0[method]), np.array(h1[method])) for method in statistics}
 
 
-def _threshold(method: str, P_FA: float, p: LoRaParams, npw: float) -> float:
-    """Umbral de Neyman-Pearson de cada método para una P_FA por símbolo, como en `detect_*`."""
-
-    # En el tiempo se prueban M muestras por símbolo: la P_FA por muestra es P_FA / M
-    if method == "full":
-        return time_threshold(npw, P_FA / p.M, p)
-    if method == "peaks":
-        return peaks_threshold(npw, P_FA / p.M, p)
-    return freq_threshold(P_FA, p)
-
-
 class RocCurves(NamedTuple):
     """Curvas ROC de un método, con la P_FA por símbolo.
 
@@ -191,7 +180,7 @@ class RocCurves(NamedTuple):
 
 
 def roc_curves(
-    SNR_dB: float, p: LoRaParams, simulations: int, P_FA_axis: np.ndarray, P_FA: float
+    p: LoRaParams, SNR_dB: float, simulations: int, P_FA_axis: np.ndarray, P_FA: float
 ) -> dict[str, RocCurves]:
     """Curvas ROC teóricas y empíricas de los tres métodos.
 
@@ -200,8 +189,8 @@ def roc_curves(
     Las curvas empíricas validan las teóricas donde se pueden medir.
 
     Args:
-        SNR_dB (float): Relación señal-ruido en decibelios.
         p (LoRaParams): Parámetros del sistema.
+        SNR_dB (float): Relación señal-ruido en decibelios.
         simulations (int): Realizaciones por hipótesis.
         P_FA_axis (np.ndarray): P_FA por símbolo donde se evalúa la curva teórica.
         P_FA (float): P_FA por símbolo del punto de operación.
@@ -217,10 +206,10 @@ def roc_curves(
         # En el tiempo se prueban M posiciones por símbolo: P_FA por símbolo = M P_FA por muestra
         positions_per_symbol = 1 if method == "freq" else p.M
         curves[method] = RocCurves(
-            P_D_theory=np.array([np.mean(h1 >= _threshold(method, q, p, npw)) for q in P_FA_axis]),
+            P_D_theory=np.array([np.mean(h1 >= threshold(method, p, npw, q)) for q in P_FA_axis]),
             P_FA_empirical=positions_per_symbol * P_FA_emp,
             P_D_empirical=P_D_emp,
-            P_D_operating=float(np.mean(h1 >= _threshold(method, P_FA, p, npw))),
+            P_D_operating=float(np.mean(h1 >= threshold(method, p, npw, P_FA))),
         )
 
     return curves
@@ -311,9 +300,9 @@ def methods_cpu_time(p: LoRaParams, P_FA: float) -> dict[str, float]:
 
     # Umbrales: fuera de la medición
     npw = noise_power(p, -10)
-    eta = time_threshold(npw, P_FA / p.M, p)
-    eta_S = peaks_threshold(npw, P_FA / p.M, p)
-    K = freq_threshold(P_FA, p)
+    eta = threshold("full", p, npw, P_FA)
+    eta_S = threshold("peaks", p, npw, P_FA)
+    K = threshold("freq", p, npw, P_FA)
     span = p.n_upchirps * p.M
 
     return {
