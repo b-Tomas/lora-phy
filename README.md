@@ -4,18 +4,42 @@ Modelo en Python de la capa física de LoRa basado en:
 
 > L. Vangelista, ["Frequency Shift Chirp Modulation: The LoRa Modulation"](https://doi.org/10.1109/LSP.2017.2762960), *IEEE Signal Processing Letters*, vol. 24, no. 12, pp. 1818–1821, dic. 2017.
 
-Desarrollo en [`LoRa.ipynb`](LoRa.ipynb).
+El desarrollo y los resultados están en [`LoRa.ipynb`](LoRa.ipynb). La implementación está en el
+paquete [`lora`](lora/), que el notebook importa.
 
 ## Uso
 
-Requiere Python 3.
+Requiere Python 3.10 o posterior.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt  # Instala el paquete lora en modo editable, Jupyter, pytest y ruff
 jupyter lab LoRa.ipynb
 ```
+
+Los cambios en `lora/` se ven en el notebook después de reiniciar el kernel.
+
+### Tests y linting
+
+```bash
+pytest
+ruff check .     # Linting (paquete, tests y notebook)
+ruff format .    # Formato
+```
+
+## Paquete `lora`
+
+| Módulo                                   | Contenido                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| [`params`](lora/params.py)               | `LoRaParams` (SF, B, preámbulo) y semilla global (`seed`, `rng`)   |
+| [`tx`](lora/tx.py)                       | Codificador, modulador (Ec. 2) y preámbulo                         |
+| [`channel`](lora/channel.py)             | AWGN, respuesta al impulso del canal y transmisión de una trama   |
+| [`rx`](lora/rx.py)                       | Demodulador (Ec. 16) y decodificador                               |
+| [`metrics`](lora/metrics.py)             | Potencia, BER, error de trama y curva ROC                          |
+| [`detection`](lora/detection.py)         | Detectores de trama y umbrales de Neyman-Pearson                   |
+| [`simulation`](lora/simulation.py)       | Simulaciones Monte Carlo: BER, tramas, ROC, falsas alarmas y costo |
+| [`plots`](lora/plots.py)                 | Gráficos del notebook                                              |
 
 ## Autores
 
