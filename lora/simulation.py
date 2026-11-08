@@ -9,9 +9,12 @@ from .channel import FLAT, noise_from_SNR, noise_power, system, transmit_frame
 from .detection import (
     Detector,
     peaks_statistic,
+    peaks_threshold,
     preamble_correlation,
     preamble_zero_count,
     threshold,
+    time_threshold,
+    zero_count_false_alarm,
 )
 from .metrics import BER, frame_error, roc
 from .params import LoRaParams
@@ -214,3 +217,43 @@ def roc_curves(
         )
 
     return curves
+
+
+def measured_false_alarms(
+    p: LoRaParams, num_noise_symbols: int, P_FA_targets: np.ndarray, Ks: tuple[int, ...] = (1, 2)
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Mide la P_FA de cada método sobre una señal larga de solo ruido (-10 dB).
+
+    Valida el cálculo de los umbrales: la fracción de posiciones que superan el umbral debe
+    coincidir con la P_FA pedida, por posición.
+
+    Args:
+        p (LoRaParams): Parámetros del sistema.
+        num_noise_symbols (int): Largo de la señal de ruido, en símbolos.
+        P_FA_targets (np.ndarray): P_FA pedidas, por posición, para los métodos en el tiempo.
+        Ks (tuple[int, ...]): Umbrales a medir en frecuencia (solo los de P_FA medible).
+
+    Returns:
+        dict[str, tuple[np.ndarray, np.ndarray]]: Para cada método, P_FA pedida y medida.
+    """
+
+    npw = noise_power(p, -10)
+    r_noise = noise_from_SNR(np.resize(preamble(p), num_noise_symbols * p.M), -10)
+    T = preamble_correlation(r_noise, p)
+    S = peaks_statistic(r_noise, p)
+    V = preamble_zero_count(r_noise, p)
+
+    return {
+        "full": (
+            P_FA_targets,
+            np.array([np.mean(T >= time_threshold(npw, q, p)) for q in P_FA_targets]),
+        ),
+        "peaks": (
+            P_FA_targets,
+            np.array([np.mean(S >= peaks_threshold(npw, q, p)) for q in P_FA_targets]),
+        ),
+        "freq": (
+            np.array([zero_count_false_alarm(K, p) for K in Ks]),
+            np.array([np.mean(V >= K) for K in Ks]),
+        ),
+    }
