@@ -63,3 +63,19 @@ def test_every_plot_returns_a_figure():
 
     assert all(isinstance(fig, Figure) for fig in figures)
     plt.close("all")
+
+
+def test_sdr_plots_return_figures():
+    p = LoRaParams(7, 125e3)
+    gap = 2
+    r = 1e3 * channel.transmit_frame(rng.integers(0, p.M, size=4), gap, p, -5, channel.FLAT)
+    snrs, fer = np.array([-12.0, -10.0]), np.array([0.5, 0.0])
+
+    figures = [
+        plots.sdr_capture(r, gap * p.M, p),
+        plots.snr_vs_atten(np.array([-10.0, -30.0]), snrs, snrs),
+        plots.fer_sdr(snrs, fer, snrs, fer, 50),
+    ]
+
+    assert all(isinstance(fig, Figure) for fig in figures)
+    plt.close("all")

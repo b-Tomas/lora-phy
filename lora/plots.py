@@ -11,6 +11,8 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from .params import LoRaParams
+from .rx import dechirp_fft
+from .sdr import ADC_FULL_SCALE
 from .simulation import RocCurves
 from .tx import instantaneous_frequency
 
@@ -613,4 +615,107 @@ def cpu_times(SFs: list[int], cpu: list[dict[str, float]]) -> Figure:
     ax.set(title="Tiempo de CPU por trama vs SF", xlabel="SF", ylabel="Tiempo de CPU (ms)")
     ax.grid(True, which="both")
     ax.legend()
+    return fig
+
+
+# --- SDR -------------------------------------------------------------------------------------
+
+
+def sdr_capture(r: np.ndarray, start: int, p: LoRaParams) -> Figure:
+    """Espectro de una captura del SDR y los up-chirps del preámbulo de una trama después del
+    dechirp.
+
+    Args:
+        r (np.ndarray): Captura.
+        start (int): Inicio de una trama detectada en `r`.
+        p (LoRaParams): Parámetros del sistema.
+
+    Returns:
+        Figure: Figura con los dos gráficos.
+    """
+
+    fig, (ax_s, ax_d) = plt.subplots(1, 2, figsize=(12, 4))
+    f = np.fft.fftshift(np.fft.fftfreq(p.M, p.T)) / 1e3
+
+    # Espectro: promedio de las FFT de bloques de un símbolo
+    blocks = r[: r.size // p.M * p.M].reshape(-1, p.M)
+    spectrum = np.mean(np.abs(np.fft.fft(blocks, axis=1) / p.M) ** 2, axis=0) / ADC_FULL_SCALE**2
+    spectrum_dB = 10 * np.log10(np.fft.fftshift(spectrum))
+    ax_s.plot(f, spectrum_dB)
+    ax_s.set(
+        title="Espectro de la captura",
+        xlabel="Frecuencia [kHz]",
+        ylabel="dB respecto del fondo de escala",
+        ylim=(spectrum_dB.max() - 40, spectrum_dB.max() + 5),
+    )
+    ax_s.grid(True)
+
+    # Dechirp de los up-chirps: la señal se concentra en 0 Hz y el ruido sigue repartido
+    D = np.mean(np.abs(dechirp_fft(r[start : start + p.n_upchirps * p.M], p)) ** 2, axis=0)
+    ax_d.plot(f, 10 * np.log10(np.fft.fftshift(D) / D.max()))
+    ax_d.set(
+        title=f"Dechirp del preámbulo (promedio de {p.n_upchirps} up-chirps)",
+        xlabel="Frecuencia [kHz]",
+        ylabel="dB respecto del pico",
+        ylim=(-50, 3),
+    )
+    ax_d.grid(True)
+    fig.tight_layout()
+    return fig
+
+
+def snr_vs_atten(attens_dB: np.ndarray, snr_dB: np.ndarray, fer_range_dB: np.ndarray) -> Figure:
+    """SNR medido sin ruido agregado vs atenuación del TX, junto con el rango de SNR donde el FER
+    simulado pasa de casi 1 a casi 0.
+
+    Args:
+        attens_dB (np.ndarray): Atenuaciones del TX.
+        snr_dB (np.ndarray): SNR medido para cada atenuación.
+        fer_range_dB (np.ndarray): SNR donde se mide el FER (se marca de su mínimo a su máximo).
+
+    Returns:
+        Figure: Figura del SNR.
+    """
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.axhspan(min(fer_range_dB), max(fer_range_dB), color="C1", alpha=0.2, label="Rango del FER")
+    ax.plot(attens_dB, snr_dB, "o-", label="SNR medido")
+    ax.set(title="Sin ruido agregado", xlabel="Atenuación del TX [dB]", ylabel="SNR [dB]")
+    ax.grid(True)
+    ax.legend()
+    fig.tight_layout()
+    return fig
+
+
+def fer_sdr(
+    SNRs_sim_dB: np.ndarray,
+    fer_sim: np.ndarray,
+    snr: np.ndarray,
+    fer: np.ndarray,
+    n_frames: int,
+) -> Figure:
+    """FER medido con el SDR sobre la curva simulada en canal plano. FER = 0 no entra en la escala
+    logarítmica: esos puntos quedan debajo de 1 / n_frames, el menor FER que se puede medir.
+
+    Args:
+        SNRs_sim_dB (np.ndarray): SNR de la simulación, en dB.
+        fer_sim (np.ndarray): FER simulado para cada SNR.
+        snr (np.ndarray): SNR medido de cada punto del SDR, en dB.
+        fer (np.ndarray): FER medido de cada punto del SDR.
+        n_frames (int): Tramas medidas por punto.
+
+    Returns:
+        Figure: Figura del FER.
+    """
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(SNRs_sim_dB, fer_sim, label="Simulación (canal plano)")
+    ax.plot(snr, fer, "o", label="SDR")
+    ax.axhline(1 / n_frames, color="gray", ls=":", label=f"1 error en {n_frames} tramas")
+    ax.set_yscale("log", nonpositive="mask")
+    ax.set_xlim(SNRs_sim_dB.min() - 0.5, SNRs_sim_dB.max() + 0.5)
+    ax.set(title="FER: simulación y SDR", xlabel="SNR [dB]", ylabel="FER")
+    ax.grid(True)
+    ax.legend()
+    fig.tight_layout()
     return fig

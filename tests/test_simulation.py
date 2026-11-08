@@ -6,7 +6,14 @@ from lora import LoRaParams, channel, detection, simulation
 def test_frame_rates_ideal(p):
     # Con la detección ideal y sin ruido, todas las tramas son correctas
     p_start, fer = simulation.frame_rates(
-        detection.ideal_detector(3), np.array([100.0]), channel.FLAT, p, 1e-3, 3, gap=3
+        detection.ideal_detector(3),
+        np.array([100.0]),
+        channel.FLAT,
+        p,
+        1e-3,
+        3,
+        num_symbols=4,
+        gap=3,
     )
     assert p_start[0] == 1 and fer[0] == 0
 
@@ -23,6 +30,7 @@ def test_frame_rates_min_errors(p, monkeypatch):
         p,
         1e-3,
         1000,
+        num_symbols=4,
         gap=3,
         min_errors=5,
     )
@@ -53,6 +61,6 @@ def test_measured_false_alarms(p):
 def test_methods_cpu_time_keys(monkeypatch):
     # Se reemplaza la medición, lenta, por una llamada: solo se prueba que cada método corre
     monkeypatch.setattr(simulation, "cpu_time", lambda fn: (fn(), 1e-3)[1])
-    times = simulation.methods_cpu_time(LoRaParams(7, 125e3), 1e-5)
+    times = simulation.methods_cpu_time(LoRaParams(7, 125e3), 1e-5, 4, 3)
     assert set(times) == {"full", "peaks", "freq"}
     assert all(t > 0 for t in times.values())
