@@ -494,6 +494,104 @@ def roc(
     return fig
 
 
+# --- Anexos ----------------------------------------------------------------------------------
+
+
+def false_alarms(
+    results: dict[str, tuple[np.ndarray, np.ndarray]], num_noise_symbols: int
+) -> Figure:
+    """P_FA medida vs pedida de cada método (`simulation.measured_false_alarms`).
+
+    Args:
+        results (dict[str, tuple[np.ndarray, np.ndarray]]): P_FA pedida y medida por método.
+        num_noise_symbols (int): Largo de la señal de ruido, en símbolos.
+
+    Returns:
+        Figure: Figura con los puntos y la diagonal.
+    """
+
+    fig, ax = plt.subplots()
+    for (method, (target, measured)), marker in zip(results.items(), "s^o"):
+        name, color = _METHODS[method]
+        ax.loglog(target, measured, marker, color=color, label=name)
+    ax.loglog([1e-6, 1], [1e-6, 1], color="k", ls="--", lw=0.8, label="Medida = pedida")
+    ax.set(
+        title=f"Falsas alarmas en {num_noise_symbols} símbolos de solo ruido",
+        xlabel="$P_{FA}$ pedida (por posición)",
+        ylabel="$P_{FA}$ medida",
+    )
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend()
+    return fig
+
+
+def fer_vs_sf(SFs: np.ndarray, fer: dict[str, np.ndarray], title: str) -> Figure:
+    """FER en escala logarítmica vs SF, una curva por canal. Los puntos en 0 no se dibujan.
+
+    Args:
+        SFs (np.ndarray): Spreading factors simulados.
+        fer (dict[str, np.ndarray]): FER para cada SF, por nombre del canal.
+        title (str): Título del gráfico.
+
+    Returns:
+        Figure: Figura con las curvas.
+    """
+
+    fig, ax = plt.subplots()
+    for name, f in fer.items():
+        ax.plot(SFs, f, marker="o", label=name)
+    ax.set_yscale("log", nonpositive="mask")
+    ax.set_xticks(SFs)
+    ax.set(title=title, xlabel="SF", ylabel="FER")
+    ax.grid(True, which="both", alpha=0.5)
+    ax.legend()
+    return fig
+
+
+def sdr_tone(captures: np.ndarray, gains_dB: np.ndarray, k: int, p: LoRaParams) -> Figure:
+    """Capturas de un tono en el bin `k` de la FFT con distintas ganancias del RX, una por fila:
+    espectro y plano I/Q contra el fondo de escala del ADC.
+
+    Args:
+        captures (np.ndarray): Capturas (una por fila) de un número entero de períodos del tono.
+        gains_dB (np.ndarray): Ganancia del RX de cada captura, en dB.
+        k (int): Bin del tono en la FFT de cada captura.
+        p (LoRaParams): Parámetros del sistema.
+
+    Returns:
+        Figure: Figura con los dos gráficos por captura.
+    """
+
+    fig, axes = plt.subplots(
+        len(captures), 2, figsize=(11, 3.6 * len(captures)), width_ratios=[2.5, 1], squeeze=False
+    )
+    square = ADC_FULL_SCALE * np.array([-1, 1, 1, -1, -1])
+    for r, gain, (ax_f, ax_iq) in zip(captures, gains_dB, axes):
+        X_dB = 20 * np.log10(
+            np.abs(np.fft.fftshift(np.fft.fft(r))) / r.size / ADC_FULL_SCALE + 1e-12
+        )
+        f = np.fft.fftshift(np.fft.fftfreq(r.size, p.T)) / 1e3
+        ax_f.plot(f, X_dB, color="gray", lw=0.6)
+        for bin_, name, marker in ((k, "Tono", "o"), (-k, "Imagen", "s"), (0, "Fuga del LO", "^")):
+            i = r.size // 2 + bin_  # Índice después de fftshift
+            ax_f.plot(f[i], X_dB[i], marker, label=f"{name}: {X_dB[i]:.0f} dB")
+        ax_f.set(
+            title=f"Espectro con ganancia {gain:.0f} dB",
+            xlabel="Frecuencia [kHz]",
+            ylabel="dB respecto del fondo de escala",
+            ylim=(-140, 10),
+        )
+        ax_f.grid(True)
+        ax_f.legend(loc="upper left", fontsize="small")
+
+        ax_iq.plot(np.real(r), np.imag(r), ",", alpha=0.5)
+        ax_iq.plot(square, np.roll(square, 1), "r--", lw=0.8, label="Fondo de escala")
+        ax_iq.set(title="Plano I/Q", xlabel="I", ylabel="Q", aspect="equal")
+        ax_iq.legend(loc="upper right", fontsize="small")
+    fig.tight_layout()
+    return fig
+
+
 # --- SDR -------------------------------------------------------------------------------------
 
 
