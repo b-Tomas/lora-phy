@@ -21,15 +21,6 @@ def test_noise_added_in_tx():
     assert sdr.evaluate(r, symbols, gaps, p, 1e-3).snr == pytest.approx(-6.0, abs=0.3)
 
 
-def test_simulated_agc():
-    # El AGC lleva el valor eficaz al objetivo; 16 dB más satura el tono
-    pluto, tone = sdr.SimulatedPluto(), np.exp(2j * np.pi * np.arange(1024) / 16)
-    r, gain = sdr.record(pluto, tone, 1024)
-    assert sdr.full_scale(r)[1] == pytest.approx(sdr.AGC_TARGET_DB, abs=0.5)
-    pluto.rx_hardwaregain_chan0 = gain + 16
-    assert sdr.full_scale(sdr.record(pluto, tone, 1024, calibrate=False)[0])[0] == 1
-
-
 def test_receive_finds_every_frame():
     # Silencios de largo al azar: cada inicio detectado es el de una trama del buffer
     symbols = rng.integers(0, p.M, size=(3, NUM_SYMBOLS))

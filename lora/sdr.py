@@ -7,17 +7,9 @@ El TX repite un buffer de varias tramas distintas (silencio de largo al azar + p
 cada una), y el RX captura el buffer completo y tres tramas más. `receive` busca las tramas en la
 captura sin saber dónde están, como un receptor real. `evaluate` sí conoce el buffer transmitido:
 lo ubica en la captura para contar los errores y medir el SNR.
-
-En el laboratorio el SNR no baja de ~14 dB ni con la máxima atenuación del TX: para medir el FER
-en la zona de transición, `measure` le suma ruido blanco a las tramas antes de transmitirlas.
-
-Chequeo previo, antes de correr el notebook:
-
-    uv run python -m lora.sdr ip:192.168.1.31
 """
 
-import argparse
-import sys
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
@@ -32,55 +24,50 @@ from .params import LoRaParams
 from .rx import demodulator
 from .tx import modulator, preamble
 
-LO_FREQ = 905e6  # Portadora, dentro de la banda permitida de 900 a 930 MHz
+LO_FREQ = 905e6  # Portadora
+TX_ATTEN_DB = -10  # Atenuación del TX al conectar
 
 TX_SCALE = 2**14  # Pico de I y Q del TX: pyadi espera muestras en ±2^14
 ADC_FULL_SCALE = 2**11  # El ADC del AD9363 es de 12 bits: muestras en ±2048
-# Valor eficaz que busca el AGC slow_attack del AD9363, en dB respecto del fondo de escala: lo
-# mantiene entre los umbrales de -10 y -12 dB (los del Pluto por defecto). No lleva el pico al
-# fondo de escala: deja margen para los picos de una señal gaussiana
-AGC_TARGET_DB = -11
+AGC_TARGET_DB = -11  # Valor eficaz que busca el AGC slow_attack, en dB respecto del fondo de escala
 ADC_NOISE_FLOOR = 1 / 6  # Ruido de cuantización complejo, 2 * Δ²/12 con Δ = 1
 TX_ATTEN_RANGE_DB = (-89, -3)  # Con menos de 3 dB de atenuación se puede dañar el receptor
 
-# Buffers del RX descartados después de cambiar el TX, para que la captura sea de la señal nueva.
-# Subir si quedan restos de la señal anterior (FER = 1 en loopback)
-FLUSH = 5
-# Buffers que se dejan pasar para que el AGC converja. Subir si la ganancia elegida varía
-AGC_SETTLE = 15
-# Muestras de los buffers descartados: cortos, para no traer muestras de más por la VPN
-SETTLE_SIZE = 2**13
+FLUSH = 5  # Buffers del RX descartados después de cambiar el TX. Subir si FER = 1 en loopback
+AGC_SETTLE = 15  # Buffers para que el AGC converja. Subir si la ganancia elegida varía
+SETTLE_SIZE = 2**13  # Muestras de los buffers descartados: cortos, para no traerlos por la VPN
 
 
-def connect(
-    uri: str, p: LoRaParams, loopback: int, lo_freq: float = LO_FREQ, tx_atten_dB: float = -10
-):
-    """Abre el Pluto y lo configura para transmitir y recibir tramas.
+@contextmanager
+def session(uri: str, p: LoRaParams, loopback: int):
+    """Abre el Pluto y lo configura para transmitir y recibir tramas. Al salir, aunque haya un
+    error, llama a `release`.
 
     Args:
         uri (str): Dirección del SDR, por ejemplo "ip:192.168.1.31".
         p (LoRaParams): Parámetros del sistema. B es la frecuencia de muestreo y el ancho de banda.
         loopback (int): 0 = por el aire, 1 = loopback digital (no pasa por el ADC ni el DAC).
-        lo_freq (float): Frecuencia de la portadora de TX y RX, en Hz.
-        tx_atten_dB (float): Atenuación del TX (`set_tx_atten`).
 
-    Returns:
+    Yields:
         adi.Pluto: SDR configurado, con el RX en control automático de ganancia.
     """
 
-    import adi  # Opcional (extra `sdr`): el resto del paquete no lo necesita
+    import adi  # Extra opcional `sdr`
 
     sdr = adi.Pluto(uri)  # pyright: ignore[reportAbstractUsage]
     sdr.loopback = loopback
     sdr.sample_rate = int(p.B)
-    sdr.tx_rf_bandwidth = int(p.B)  # Filtro antialiasing: el ancho de banda de la señal
+    sdr.tx_rf_bandwidth = int(p.B)
     sdr.rx_rf_bandwidth = int(p.B)
-    sdr.tx_lo = int(lo_freq)
-    sdr.rx_lo = int(lo_freq)
-    set_tx_atten(sdr, tx_atten_dB)
+    sdr.tx_lo = int(LO_FREQ)
+    sdr.rx_lo = int(LO_FREQ)
+    set_tx_atten(sdr, TX_ATTEN_DB)
     sdr.gain_control_mode_chan0 = "slow_attack"
     sdr.tx_cyclic_buffer = True
-    return sdr
+    try:
+        yield sdr
+    finally:
+        release(sdr)
 
 
 def set_tx_atten(sdr, tx_atten_dB: float) -> None:
@@ -102,17 +89,6 @@ def release(sdr) -> None:
     sdr.tx_lo = int(2400e6)
     sdr.rx_lo = int(950e6)
     sdr.tx(np.zeros(2048, dtype=complex))
-
-
-@contextmanager
-def session(uri: str, p: LoRaParams, loopback: int, lo_freq: float = LO_FREQ):
-    """`connect` para usar con `with`: al salir, aunque haya un error, llama a `release`."""
-
-    sdr = connect(uri, p, loopback, lo_freq)
-    try:
-        yield sdr
-    finally:
-        release(sdr)
 
 
 class SimulatedPluto:
@@ -173,58 +149,29 @@ def frames(symbols: np.ndarray, gaps: np.ndarray, p: LoRaParams) -> np.ndarray:
     )
 
 
-def send(sdr, x: np.ndarray) -> None:
-    """Transmite `x` en forma cíclica, con pico TX_SCALE en I y Q, y descarta los buffers del RX
-    con la señal anterior."""
-
-    sdr.tx_destroy_buffer()
-    sdr.rx_destroy_buffer()
-    sdr.rx_buffer_size = SETTLE_SIZE
-    sdr.tx(x / max(np.abs(np.real(x)).max(), np.abs(np.imag(x)).max()) * TX_SCALE)
-    _flush(sdr)
-
-
-def _flush(sdr, n: int = FLUSH) -> None:
-    for _ in range(n):
-        sdr.rx()
-
-
-def calibrate_gain(sdr, margin_dB: float = 0) -> float:
-    """Deja actuar al AGC sobre la señal que se está transmitiendo y fija la ganancia.
-
-    El control automático de ganancia (AGC) lleva el valor eficaz de la señal a AGC_TARGET_DB:
-    aprovecha el rango del ADC y deja margen para los picos. Después se pasa a ganancia manual con
-    ese valor: con el AGC activo, el silencio y la trama se recibirían con ganancias distintas.
-
-    Args:
-        sdr (adi.Pluto): SDR transmitiendo la señal.
-        margin_dB (float): Ganancia que se resta a la del AGC, si la señal satura.
-
-    Returns:
-        float: Ganancia fija del RX, en dB.
-    """
-
-    sdr.gain_control_mode_chan0 = "slow_attack"
-    _flush(sdr, AGC_SETTLE)
-    gain = sdr.rx_hardwaregain_chan0 - margin_dB
-    sdr.gain_control_mode_chan0 = "manual"
-    sdr.rx_hardwaregain_chan0 = gain
-    _flush(sdr)
-    return gain
-
-
 def record(sdr, x: np.ndarray, n_samples: int, calibrate: bool = True) -> tuple[np.ndarray, float]:
-    """Transmite `x` (`send`), calibra la ganancia si se pide y captura `n_samples` muestras.
+    """Transmite `x` en forma cíclica y captura `n_samples` muestras de la señal nueva.
 
-    La captura usa un buffer del RX nuevo: todas sus muestras son posteriores a los cambios.
+    Si `calibrate`, deja actuar al control automático de ganancia (AGC) y después fija la ganancia
+    que eligió: con el AGC activo, el silencio y la trama se recibirían con ganancias distintas.
 
     Returns:
         tuple[np.ndarray, float]: Captura y ganancia del RX, en dB.
     """
 
-    send(sdr, x)
+    sdr.tx_destroy_buffer()
+    sdr.rx_destroy_buffer()
+    sdr.rx_buffer_size = SETTLE_SIZE
+    sdr.tx(x / adc_peak(x) * TX_SCALE)
     if calibrate:
-        calibrate_gain(sdr)
+        sdr.gain_control_mode_chan0 = "slow_attack"
+        for _ in range(AGC_SETTLE):
+            sdr.rx()
+        gain = sdr.rx_hardwaregain_chan0
+        sdr.gain_control_mode_chan0 = "manual"
+        sdr.rx_hardwaregain_chan0 = gain
+    for _ in range(FLUSH):  # Buffers con la señal anterior
+        sdr.rx()
     sdr.rx_destroy_buffer()
     sdr.rx_buffer_size = n_samples
     return sdr.rx(), sdr.rx_hardwaregain_chan0
@@ -254,7 +201,7 @@ def measure(
         gap_range (tuple[int, int]): Largo mínimo y máximo del silencio antes de cada trama, en símbolos.
         SNR_dB (float): SNR del ruido que se suma en el TX, como en `channel.transmit_frame`
             (respecto de la potencia de la trama, también sobre el silencio). Infinito: sin ruido.
-        calibrate (bool): Calibrar la ganancia del RX con el AGC (`calibrate_gain`).
+        calibrate (bool): Calibrar la ganancia del RX con el AGC (`record`).
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, float]: Símbolos transmitidos
@@ -265,7 +212,6 @@ def measure(
     symbols = params.rng.integers(0, p.M, size=(n_frames, num_symbols))
     gaps = params.rng.integers(gap_range[0] * p.M, gap_range[1] * p.M + 1, size=n_frames)
     x = frames(symbols, gaps, p)
-    # Potencia del ruido respecto de la potencia de la trama, como en `channel.transmit_frame`
     tx = x + noise_from_SNR(np.resize(preamble(p), x.size), SNR_dB)
     # Largo de la captura: el de n_frames + 3 períodos con el silencio máximo. Es mayor o igual que
     # el buffer más tres períodos, y no depende de los silencios: las capturas se pueden apilar
@@ -274,12 +220,17 @@ def measure(
     return symbols, gaps, r, gain
 
 
-def full_scale(r: np.ndarray) -> tuple[float, float]:
-    """Uso del rango del ADC: pico de I y Q como fracción del fondo de escala (1 = satura) y
-    potencia media en dB respecto del fondo de escala."""
+def adc_peak(x: np.ndarray) -> float:
+    """Mayor valor absoluto de I y Q."""
 
-    peak = max(np.abs(np.real(r)).max(), np.abs(np.imag(r)).max()) / ADC_FULL_SCALE
-    return float(peak), float(10 * np.log10(power(r) / ADC_FULL_SCALE**2))
+    return float(np.abs(np.r_[x.real, x.imag]).max())
+
+
+def stack(runs: list, **meta) -> tuple[np.ndarray, dict]:
+    """Junta las salidas de `measure` de un barrido, una por punto, en capturas y metadatos."""
+
+    symbols, gaps, captures, gains = map(np.array, zip(*runs))
+    return captures, {"symbols": symbols, "gaps": gaps, "gain": gains, **meta}
 
 
 # --- Recepción y medición (sin SDR) ----------------------------------------------------------
@@ -423,50 +374,29 @@ def load(path: str | Path) -> tuple[np.ndarray, dict]:
     return iq[..., 0] + 1j * iq[..., 1], data
 
 
-# --- Chequeo previo --------------------------------------------------------------------------
+def evaluate_all(captures: np.ndarray, meta: dict, p: LoRaParams, P_FA: float) -> list[Evaluation]:
+    """`evaluate` para cada captura de `stack`."""
+
+    return [evaluate(r, s, g, p, P_FA) for r, s, g in zip(captures, meta["symbols"], meta["gaps"])]
 
 
-def check(uri: str, lo_freq: float = LO_FREQ) -> bool:
-    """Verifica el SDR: tramas por loopback digital y por el aire, con la ganancia calibrada.
-    Imprime el resultado de cada paso.
+def acquire(
+    path: str, run: Callable, p: LoRaParams, uri: str | None, loopback: int = 0
+) -> tuple[np.ndarray, dict]:
+    """Capturas de un paso del experimento y sus metadatos.
 
-    Args:
-        uri (str): Dirección del SDR.
-        lo_freq (float): Frecuencia de la portadora, en Hz.
-
-    Returns:
-        bool: True si las tramas se decodifican en los dos casos y el AGC llevó la señal al valor
-        eficaz esperado sin saturar.
+    Con `uri`, mide con el SDR (`run(pluto)` devuelve capturas y metadatos) y las guarda en `path`.
+    Sin `uri`, carga las guardadas o, si no hay, mide con `SimulatedPluto` sin guardar.
     """
 
-    # Los mismos parámetros que el notebook
-    p = LoRaParams(SF=8, B=1e6)
-    num_symbols, gap_range = 10, (5, 10)
-    P_FA = p.Ts / 60  # Una falsa alarma por minuto
-
-    print(f"Conectando a {uri}...")
-    with session(uri, p, loopback=1, lo_freq=lo_freq) as sdr:
-        symbols, gaps, r, _ = measure(sdr, p, 3, num_symbols, gap_range, calibrate=False)
-        ok_loop = not evaluate(r, symbols, gaps, p, P_FA).errors.any()
-        print(f"Loopback digital: {'OK' if ok_loop else 'FALLA'} (pico {full_scale(r)[0]:.0%})")
-
-        sdr.loopback = 0
-        symbols, gaps, r, gain = measure(sdr, p, 3, num_symbols, gap_range)
-        peak, rms = full_scale(r)
-        ok_scale = peak < 1 and abs(rms - AGC_TARGET_DB) <= 3
-        print(f"Ganancia del RX: {gain} dB, nivel {rms:.0f} dB, pico {peak:.0%}", end="")
-        print("" if ok_scale else f" (se esperaba {AGC_TARGET_DB} dB sin saturar)")
-
-        errors, _, snr, _ = evaluate(r, symbols, gaps, p, P_FA)
-        print(f"Por el aire ({lo_freq / 1e6:.0f} MHz): {'FALLA' if errors.any() else 'OK'}", end="")
-        print(f", SNR {snr:.1f} dB (sin ruido agregado: lo limita la distorsión del equipo)")
-
-    return ok_loop and ok_scale and not errors.any()
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Chequeo del ADALM-Pluto antes del notebook")
-    parser.add_argument("uri", help='dirección del SDR, por ejemplo "ip:192.168.1.31"')
-    parser.add_argument("--lo", type=float, default=LO_FREQ, help="portadora en Hz")
-    args = parser.parse_args()
-    sys.exit(0 if check(args.uri, args.lo) else 1)
+    if uri is not None:
+        with session(uri, p, loopback) as pluto:
+            captures, meta = run(pluto)
+        save(path, captures, **meta)
+    elif not Path(path).exists():
+        print(f"Sin {path}: Pluto simulado (canal plano, sin ruido ni distorsión del equipo)")
+        return run(SimulatedPluto())
+    captures, meta = load(path)
+    if "source" in meta:
+        print(meta["source"])
+    return captures, meta
