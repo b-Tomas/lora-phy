@@ -61,7 +61,7 @@ uv run ruff format .    # Formato
 | [`rx`](lora/rx.py)                 | Demodulador y decodificador                                        |
 | [`metrics`](lora/metrics.py)       | Potencia, BER, error de trama y curva ROC                          |
 | [`detection`](lora/detection.py)   | Detectores de trama y umbrales de Neyman-Pearson                   |
-| [`simulation`](lora/simulation.py) | Simulaciones Monte Carlo: BER, tramas, ROC, falsas alarmas y costo |
+| [`simulation`](lora/simulation.py) | Simulaciones Monte Carlo: BER, tramas y ROC                        |
 | [`sdr`](lora/sdr.py)               | Transmisión y recepción con ADALM-Pluto                            |
 | [`plots`](lora/plots.py)           | Gráficos del notebook                                              |
 

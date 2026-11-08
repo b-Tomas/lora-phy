@@ -24,9 +24,6 @@ _METHODS = {
     "ideal": ("Detección ideal", "k"),
 }
 
-# Marcador de cada método en los gráficos de puntos
-_MARKERS = {"full": "s", "peaks": "^", "freq": "o"}
-
 # Muestras por ventana de la FFT de los espectrogramas
 _NFFT = 16
 
@@ -254,7 +251,6 @@ def _detection_marks(ax: Axes, real: int, start: int | None) -> None:
 
 
 def full_preamble_detection(
-    T_clean: np.ndarray,
     T: np.ndarray,
     eta: float,
     start: int | None,
@@ -263,37 +259,35 @@ def full_preamble_detection(
     P_FA: float,
     SNR_dB: float,
 ) -> Figure:
-    """Estadístico T[k] de la correlación con el preámbulo completo, sin y con ruido.
+    """Estadístico T[k] de la correlación con el preámbulo completo, con el umbral.
 
     Args:
-        T_clean (np.ndarray): Estadístico sobre la trama sin ruido.
-        T (np.ndarray): Estadístico sobre la trama con ruido.
+        T (np.ndarray): Estadístico sobre la trama.
         eta (float): Umbral de decisión.
         start (int | None): Muestra de inicio detectada, o None.
         gap (int): Símbolos de silencio antes de la trama.
         p (LoRaParams): Parámetros del sistema.
         P_FA (float): Probabilidad de falsa alarma por símbolo del umbral.
-        SNR_dB (float): SNR de la trama con ruido.
+        SNR_dB (float): SNR de la trama.
 
     Returns:
-        Figure: Figura con los dos gráficos.
+        Figure: Figura del estadístico.
     """
 
-    n_samples = T.size + p.n_upchirps * p.M - 1  # Largo de la señal recibida
-
-    fig, axs = plt.subplots(2, 1, figsize=(10, 6))
-    axs[0].plot(T_clean, color="green", lw=0.8)
-    axs[0].axvline(gap * p.M, color="k", ls="--", lw=0.8, label="Inicio real")
-    axs[0].set(title="Correlación con el preámbulo completo (sin ruido)")
-    axs[1].plot(T, color="green", lw=0.8)
-    axs[1].axhline(
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    ax.plot(T, color="green", lw=0.8)
+    ax.axhline(
         eta, color="r", ls="--", lw=0.8, label=f"Umbral η ($P_{{FA}}$={P_FA:.1e} por símbolo)"
     )
-    _detection_marks(axs[1], gap * p.M, start)
-    axs[1].set(title=f"Inicio real k={gap * p.M}, detectado k={start} (SNR={SNR_dB} dB)")
-    for ax in axs:
-        ax.set(xlabel="k (muestra)", ylabel="$T[k]$", xlim=(0, n_samples))
-        ax.legend(loc="upper right")
+    _detection_marks(ax, gap * p.M, start)
+    ax.set(
+        title=f"Correlación con el preámbulo completo: inicio real k={gap * p.M}, "
+        f"detectado k={start} (SNR={SNR_dB} dB)",
+        xlabel="k (muestra)",
+        ylabel="$T[k]$",
+        xlim=(0, T.size + p.n_upchirps * p.M - 1),  # Largo de la señal recibida
+    )
+    ax.legend(loc="upper right")
     fig.tight_layout()
     return fig
 
@@ -407,31 +401,7 @@ def freq_detection(
     return fig
 
 
-# --- Performance de los detectores -----------------------------------------------------------
-
-
-def start_vs_snr(
-    SNRs_dB: np.ndarray, start_flat: np.ndarray, start_sel: np.ndarray, title: str
-) -> Figure:
-    """Probabilidad de detectar el inicio correcto vs SNR de un método, en ambos canales.
-
-    Args:
-        SNRs_dB (np.ndarray): SNR simulados, en decibelios.
-        start_flat (np.ndarray): P(inicio correcto) en el canal plano.
-        start_sel (np.ndarray): P(inicio correcto) en el canal selectivo en frecuencia.
-        title (str): Título del gráfico.
-
-    Returns:
-        Figure: Figura con las dos curvas.
-    """
-
-    fig, ax = plt.subplots()
-    ax.plot(SNRs_dB, start_flat, marker="s", label="Canal plano")
-    ax.plot(SNRs_dB, start_sel, marker="o", label="Canal selectivo en frecuencia")
-    ax.set(title=title, xlabel="SNR (dB)", ylabel="P(inicio correcto)")
-    ax.grid(True)
-    ax.legend()
-    return fig
+# --- Desempeño de los detectores -----------------------------------------------------------
 
 
 def compare_methods(
@@ -440,10 +410,9 @@ def compare_methods(
     sel: dict[str, np.ndarray],
     ylabel: str,
     title: str,
-    xlim: tuple[float, float] | None = None,
     logy: bool = False,
 ) -> Figure:
-    """Compara una métrica de los métodos: línea llena en el canal plano, punteada en el selectivo.
+    """Compara una métrica de los métodos vs SNR, un gráfico por canal.
 
     Args:
         SNRs_dB (np.ndarray): SNR simulados, en decibelios.
@@ -451,97 +420,26 @@ def compare_methods(
             método ("full", "peaks", "freq" o "ideal").
         sel (dict[str, np.ndarray]): Métrica de cada método en el canal selectivo.
         ylabel (str): Nombre de la métrica.
-        title (str): Título del gráfico.
-        xlim (tuple[float, float] | None): Rango de SNR a mostrar. None muestra todo.
+        title (str): Título de la figura.
         logy (bool): Eje y logarítmico. Los puntos en 0 no se dibujan.
 
     Returns:
-        Figure: Figura con las curvas.
+        Figure: Figura con los dos gráficos.
     """
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    for method, metric_flat in flat.items():
-        name, color = _METHODS[method]
-        ax.plot(SNRs_dB, metric_flat, color=color, marker="o", label=f"{name}, plano")
-        ax.plot(
-            SNRs_dB,
-            sel[method],
-            color=color,
-            marker="o",
-            mfc="none",
-            ls="--",
-            label=f"{name}, selectivo",
-        )
-    if xlim is not None:
-        ax.set_xlim(xlim)
-    if logy:
-        ax.set_yscale("log", nonpositive="mask")
-    ax.set(title=title, xlabel="SNR (dB)", ylabel=ylabel)
-    ax.grid(True, which="both" if logy else "major")
-    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1))  # Afuera: no tapa las curvas
-    return fig
-
-
-def fer_sweep(
-    x: np.ndarray, fer: dict[str, np.ndarray], xlabel: str, title: str, logx: bool = False
-) -> Figure:
-    """FER en escala logarítmica en función de un parámetro del sistema, una curva por canal.
-
-    Args:
-        x (np.ndarray): Valores del parámetro.
-        fer (dict[str, np.ndarray]): FER para cada valor de `x`, por nombre del canal.
-        xlabel (str): Nombre del parámetro.
-        title (str): Título del gráfico.
-        logx (bool): Eje x logarítmico (en base 2).
-
-    Returns:
-        Figure: Figura con las curvas. Los puntos con FER = 0 no se dibujan.
-    """
-
-    fig, ax = plt.subplots()
-    for name, f in fer.items():
-        ax.plot(x, f, marker="o", label=name)
-    ax.set_yscale("log", nonpositive="mask")
-    if logx:
-        ax.set_xscale("log", base=2)
-    ax.set_xticks(x, [str(v) for v in x])
-    ax.set(title=title, xlabel=xlabel, ylabel="FER")
-    ax.grid(True, which="both")
-    ax.legend()
-    return fig
-
-
-def false_alarms(
-    results: dict[str, tuple[np.ndarray, np.ndarray]],
-    num_noise_symbols: int,
-    Ks: tuple[int, ...],
-) -> Figure:
-    """P_FA medida vs pedida de cada método (`simulation.measured_false_alarms`).
-
-    Args:
-        results (dict[str, tuple[np.ndarray, np.ndarray]]): P_FA pedida y medida por método.
-        num_noise_symbols (int): Largo de la señal de ruido, en símbolos.
-        Ks (tuple[int, ...]): Umbrales medidos en frecuencia, los mismos que se pasaron a
-            `measured_false_alarms`. Sus puntos son umbrales enteros, no P_FA pedidas.
-
-    Returns:
-        Figure: Figura con los puntos y la diagonal.
-    """
-
-    fig, ax = plt.subplots()
-    for method, (target, measured) in results.items():
-        name, color = _METHODS[method]
-        if method == "freq":
-            name += f", K = {', '.join(map(str, Ks))}"
-        ax.loglog(target, measured, _MARKERS[method], color=color, label=name)
-    ax.loglog([1e-6, 1], [1e-6, 1], color="k", ls="--", lw=0.8, label="Medida = pedida")
-    ax.set(
-        title=f"Falsas alarmas en {num_noise_symbols} símbolos de solo ruido",
-        xlabel="$P_{FA}$ pedida (por posición)",
-        ylabel="$P_{FA}$ medida",
-    )
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend()
+    fig, axs = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+    for ax, metric, channel in zip(axs, (flat, sel), ("Canal plano", "Canal selectivo")):
+        for method, values in metric.items():
+            name, color = _METHODS[method]
+            ax.plot(SNRs_dB, values, color=color, marker="o", label=name)
+        if logy:
+            ax.set_yscale("log", nonpositive="mask")
+        ax.set(title=channel, xlabel="SNR (dB)")
+        ax.grid(True, which="both" if logy else "major", alpha=0.5)
+    axs[0].set_ylabel(ylabel)
+    axs[0].legend()
+    fig.suptitle(title)
+    fig.tight_layout()
     return fig
 
 
@@ -593,28 +491,6 @@ def roc(
     # Una sola leyenda debajo de los gráficos, para no tapar las curvas
     fig.legend(*axs[0, -1].get_legend_handles_labels(), loc="lower center", ncol=5)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
-    return fig
-
-
-def cpu_times(SFs: list[int], cpu: list[dict[str, float]]) -> Figure:
-    """Tiempo de CPU por trama de cada método vs SF (`simulation.methods_cpu_time`).
-
-    Args:
-        SFs (list[int]): Spreading factors medidos.
-        cpu (list[dict[str, float]]): Tiempo de cada método, en segundos, para cada SF.
-
-    Returns:
-        Figure: Figura con una curva por método.
-    """
-
-    fig, ax = plt.subplots()
-    for method in cpu[0]:
-        name, color = _METHODS[method]
-        ax.semilogy(SFs, [c[method] * 1e3 for c in cpu], color=color, marker="o", label=name)
-    ax.set_xticks(SFs)
-    ax.set(title="Tiempo de CPU por trama vs SF", xlabel="SF", ylabel="Tiempo de CPU (ms)")
-    ax.grid(True, which="both")
-    ax.legend()
     return fig
 
 

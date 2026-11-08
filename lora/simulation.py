@@ -1,8 +1,5 @@
 """Simulaciones Monte Carlo del sistema. Devuelven datos; los gráficos están en `plots`."""
 
-import time
-import timeit
-from collections.abc import Callable
 from typing import NamedTuple
 
 import numpy as np
@@ -11,14 +8,10 @@ from . import params
 from .channel import FLAT, noise_from_SNR, noise_power, system, transmit_frame
 from .detection import (
     Detector,
-    detect_start,
     peaks_statistic,
-    peaks_threshold,
     preamble_correlation,
     preamble_zero_count,
     threshold,
-    time_threshold,
-    zero_count_false_alarm,
 )
 from .metrics import BER, frame_error, roc
 from .params import LoRaParams
@@ -221,102 +214,3 @@ def roc_curves(
         )
 
     return curves
-
-
-def measured_false_alarms(
-    p: LoRaParams, num_noise_symbols: int, P_FA_targets: np.ndarray, Ks: tuple[int, ...] = (1, 2)
-) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-    """Mide la P_FA de cada método sobre una señal larga de solo ruido (-10 dB).
-
-    Valida el cálculo de los umbrales: la fracción de posiciones que superan el umbral debe
-    coincidir con la P_FA pedida, por posición.
-
-    Args:
-        p (LoRaParams): Parámetros del sistema.
-        num_noise_symbols (int): Largo de la señal de ruido, en símbolos.
-        P_FA_targets (np.ndarray): P_FA pedidas, por posición, para los métodos en el tiempo.
-        Ks (tuple[int, ...]): Umbrales a medir en frecuencia (solo los de P_FA medible).
-
-    Returns:
-        dict[str, tuple[np.ndarray, np.ndarray]]: Para cada método, P_FA pedida y medida.
-    """
-
-    # Señal de solo ruido, con la potencia de ruido de -10 dB
-    npw = noise_power(p, -10)
-    r_noise = noise_from_SNR(np.resize(preamble(p), num_noise_symbols * p.M), -10)
-
-    # Estadístico de cada método en todas las posiciones
-    T = preamble_correlation(r_noise, p)
-    S = peaks_statistic(r_noise, p)
-    V = preamble_zero_count(r_noise, p)
-
-    # Fracción de posiciones que superan el umbral, para cada P_FA pedida
-    return {
-        "full": (
-            P_FA_targets,
-            np.array([np.mean(T >= time_threshold(npw, q, p)) for q in P_FA_targets]),
-        ),
-        "peaks": (
-            P_FA_targets,
-            np.array([np.mean(S >= peaks_threshold(npw, q, p)) for q in P_FA_targets]),
-        ),
-        "freq": (
-            np.array([zero_count_false_alarm(K, p) for K in Ks]),
-            np.array([np.mean(V >= K) for K in Ks]),
-        ),
-    }
-
-
-# --- Costo computacional ---------------------------------------------------------------------
-
-
-def cpu_time(fn: Callable[[], object]) -> float:
-    """Tiempo de CPU de una llamada a `fn`, en segundos.
-
-    Repite la medición 5 veces y devuelve la mínima: la menos afectada por otros procesos.
-
-    Args:
-        fn (Callable): Función sin argumentos a medir.
-
-    Returns:
-        float: Tiempo de CPU por llamada, en segundos.
-    """
-
-    timer = timeit.Timer(fn, timer=time.process_time)
-
-    # Llamadas por medición, para que cada medición dure al menos 0.2 s
-    number, _ = timer.autorange()
-
-    return min(timer.repeat(repeat=5, number=number)) / number
-
-
-def methods_cpu_time(p: LoRaParams, P_FA: float, num_symbols: int, gap: int) -> dict[str, float]:
-    """Tiempo de CPU de cada método de detección para procesar una trama.
-
-    Mide el estadístico y la decisión sobre una trama a -10 dB. Los umbrales se calculan antes,
-    porque se calculan una vez por estimación de sigma^2 y no por trama.
-
-    Args:
-        p (LoRaParams): Parámetros del sistema.
-        P_FA (float): Probabilidad de falsa alarma por símbolo.
-        num_symbols (int): Símbolos del payload de la trama.
-        gap (int): Símbolos de silencio antes de la trama.
-
-    Returns:
-        dict[str, float]: Tiempo de CPU por trama, en segundos, de cada método.
-    """
-
-    r = transmit_frame(params.rng.integers(0, p.M, size=num_symbols), gap, p, -10, FLAT)
-
-    # Umbrales: fuera de la medición
-    npw = noise_power(p, -10)
-    eta = threshold("full", p, npw, P_FA)
-    eta_S = threshold("peaks", p, npw, P_FA)
-    K = threshold("freq", p, npw, P_FA)
-    span = p.n_upchirps * p.M
-
-    return {
-        "full": cpu_time(lambda: detect_start(preamble_correlation(r, p), eta, span)),
-        "peaks": cpu_time(lambda: detect_start(peaks_statistic(r, p), eta_S, span)),
-        "freq": cpu_time(lambda: detect_start(preamble_zero_count(r, p), K, p.n_upchirps)),
-    }
