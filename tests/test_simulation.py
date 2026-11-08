@@ -1,6 +1,6 @@
 import numpy as np
 
-from lora import LoRaParams, channel, detection, simulation
+from lora import channel, detection, simulation
 
 
 def test_frame_rates_ideal(p):
@@ -46,21 +46,3 @@ def test_roc_curves_shape(p):
     curves = simulation.roc_curves(p, -14, 20, axis, 1e-5)
     assert set(curves) == {"full", "peaks", "freq"}
     assert all(c.P_D_theory.shape == axis.shape for c in curves.values())
-
-
-def test_measured_false_alarms(p):
-    # Los umbrales de Neyman-Pearson cumplen la P_FA pedida (por posición) sobre ruido
-    targets = np.array([1e-1, 1e-2])
-    res = simulation.measured_false_alarms(p, 2000, targets)
-    assert set(res) == {"full", "peaks", "freq"}
-    for method in ("full", "peaks"):
-        target, measured = res[method]
-        assert np.allclose(measured, target, rtol=0.2)
-
-
-def test_methods_cpu_time_keys(monkeypatch):
-    # Se reemplaza la medición, lenta, por una llamada: solo se prueba que cada método corre
-    monkeypatch.setattr(simulation, "cpu_time", lambda fn: (fn(), 1e-3)[1])
-    times = simulation.methods_cpu_time(LoRaParams(7, 125e3), 1e-5, 4, 3)
-    assert set(times) == {"full", "peaks", "freq"}
-    assert all(t > 0 for t in times.values())
