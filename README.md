@@ -27,6 +27,22 @@ jupyter lab LoRa.ipynb
 
 Los cambios en `lora/` se ven en el notebook después de reiniciar el kernel.
 
+### SDR (ADALM-Pluto)
+
+El último capítulo del notebook prueba el receptor con un ADALM-Pluto del laboratorio. Por defecto
+(`USE_SDR = False`) usa las capturas guardadas en `captures/` y no necesita el SDR.
+
+Para Utilizar el SDR:
+
+```bash
+sudo pacman -S libiio        # libiio 0.26 del sistema (pylibiio queda fijado < 1)
+uv sync --extra dev --extra sdr
+# Con la VPN del laboratorio conectada: conexión, loopback digital y fondo de escala
+uv run python -m lora.sdr ip:192.168.1.31
+```
+
+Si el chequeo es exitoso, poner `USE_SDR = True` en el notebook y ejecutar.
+
 ### Tests y linting
 
 ```bash
@@ -46,6 +62,7 @@ uv run ruff format .    # Formato
 | [`metrics`](lora/metrics.py)       | Potencia, BER, error de trama y curva ROC                          |
 | [`detection`](lora/detection.py)   | Detectores de trama y umbrales de Neyman-Pearson                   |
 | [`simulation`](lora/simulation.py) | Simulaciones Monte Carlo: BER, tramas, ROC, falsas alarmas y costo |
+| [`sdr`](lora/sdr.py)               | Transmisión y recepción con ADALM-Pluto y chequeo previo           |
 | [`plots`](lora/plots.py)           | Gráficos del notebook                                              |
 
 ## Autores

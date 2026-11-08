@@ -89,8 +89,8 @@ def frame_rates(
     p: LoRaParams,
     P_FA: float,
     simulations: int,
-    num_symbols: int = 16,
-    gap: int = 5,
+    num_symbols: int,
+    gap: int,
     min_errors: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Simula tramas con un detector y estima el inicio correcto y el FER para cada SNR.
@@ -290,7 +290,7 @@ def cpu_time(fn: Callable[[], object]) -> float:
     return min(timer.repeat(repeat=5, number=number)) / number
 
 
-def methods_cpu_time(p: LoRaParams, P_FA: float) -> dict[str, float]:
+def methods_cpu_time(p: LoRaParams, P_FA: float, num_symbols: int, gap: int) -> dict[str, float]:
     """Tiempo de CPU de cada método de detección para procesar una trama.
 
     Mide el estadístico y la decisión sobre una trama a -10 dB. Los umbrales se calculan antes,
@@ -299,12 +299,14 @@ def methods_cpu_time(p: LoRaParams, P_FA: float) -> dict[str, float]:
     Args:
         p (LoRaParams): Parámetros del sistema.
         P_FA (float): Probabilidad de falsa alarma por símbolo.
+        num_symbols (int): Símbolos del payload de la trama.
+        gap (int): Símbolos de silencio antes de la trama.
 
     Returns:
         dict[str, float]: Tiempo de CPU por trama, en segundos, de cada método.
     """
 
-    r = transmit_frame(params.rng.integers(0, p.M, size=16), 5, p, -10, FLAT)
+    r = transmit_frame(params.rng.integers(0, p.M, size=num_symbols), gap, p, -10, FLAT)
 
     # Umbrales: fuera de la medición
     npw = noise_power(p, -10)

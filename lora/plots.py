@@ -11,6 +11,8 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from .params import LoRaParams
+from .rx import dechirp_fft
+from .sdr import ADC_FULL_SCALE
 from .simulation import RocCurves
 from .tx import instantaneous_frequency
 
@@ -613,4 +615,238 @@ def cpu_times(SFs: list[int], cpu: list[dict[str, float]]) -> Figure:
     ax.set(title="Tiempo de CPU por trama vs SF", xlabel="SF", ylabel="Tiempo de CPU (ms)")
     ax.grid(True, which="both")
     ax.legend()
+    return fig
+
+
+# --- SDR -------------------------------------------------------------------------------------
+
+
+def _full_scale_lines(ax: Axes) -> None:
+    for y, label in ((ADC_FULL_SCALE, "Fondo de escala"), (-ADC_FULL_SCALE, None)):
+        ax.axhline(y, color="r", ls="--", lw=0.8, label=label)
+    ax.set_ylim(-1.1 * ADC_FULL_SCALE, 1.1 * ADC_FULL_SCALE)
+
+
+def sdr_capture(
+    r: np.ndarray, start: int | None, silence: int, frame_len: int, p: LoRaParams
+) -> Figure:
+    """Captura de tramas del SDR: muestras contra el fondo de escala del ADC, su distribución, el
+    espectro y los up-chirps del preámbulo después del dechirp.
+
+    Args:
+        r (np.ndarray): Captura.
+        start (int | None): Inicio de una trama detectada en `r`, o None.
+        silence (int): Muestras de silencio a mostrar antes de la trama.
+        frame_len (int): Muestras de la trama (preámbulo y payload).
+        p (LoRaParams): Parámetros del sistema.
+
+    Returns:
+        Figure: Figura con los cuatro gráficos.
+    """
+
+    fig = plt.figure(figsize=(12, 7))
+    grid = fig.add_gridspec(2, 4)
+    ax_t, ax_h = fig.add_subplot(grid[0, :3]), fig.add_subplot(grid[0, 3])
+    ax_s, ax_d = fig.add_subplot(grid[1, :2]), fig.add_subplot(grid[1, 2:])
+
+    # El silencio y la trama detectada
+    begin = 0 if start is None else max(start - silence, 0)
+    segment = r[begin : begin + silence + frame_len]
+    ax_t.plot(np.real(segment), lw=0.5, label="I")
+    ax_t.plot(np.imag(segment), lw=0.5, label="Q")
+    if start is not None:
+        ax_t.axvline(start - begin, color="k", ls="--", lw=0.8, label="Inicio detectado")
+        ax_t.axvline(start - begin + p.preamble_len, color="k", ls=":", label="Fin del preámbulo")
+    _full_scale_lines(ax_t)
+    ax_t.set(title="Silencio y trama", xlabel="Muestra", ylabel="Amplitud")
+    ax_t.legend(loc="lower right", ncol=5, fontsize="small")
+
+    # Distribución de toda la captura, con la gaussiana de la misma potencia
+    ax_h.hist(
+        [np.real(r), np.imag(r)],
+        bins=80,
+        density=True,
+        orientation="horizontal",
+        histtype="step",
+        label=["I", "Q"],
+    )
+    sigma = np.sqrt(np.mean(np.abs(r) ** 2) / 2)
+    y = np.linspace(-ADC_FULL_SCALE, ADC_FULL_SCALE, 200)
+    gauss = np.exp(-(y**2) / (2 * sigma**2)) / (np.sqrt(2 * np.pi) * sigma)
+    ax_h.plot(gauss, y, "k--", lw=0.8, label="Gaussiana")
+    _full_scale_lines(ax_h)
+    ax_h.set(title="Distribución", xlabel="Densidad", yticklabels=[])
+    ax_h.set_xticks([])
+    ax_h.legend(loc="lower right", fontsize="small")
+
+    # Espectro: promedio de las FFT de bloques de un símbolo
+    blocks = r[: r.size // p.M * p.M].reshape(-1, p.M)
+    spectrum = np.mean(np.abs(np.fft.fft(blocks, axis=1) / p.M) ** 2, axis=0) / ADC_FULL_SCALE**2
+    f = np.fft.fftshift(np.fft.fftfreq(p.M, p.T)) / 1e3
+    spectrum_dB = 10 * np.log10(np.fft.fftshift(spectrum))
+    ax_s.plot(f, spectrum_dB)
+    ax_s.set(
+        title="Espectro de la captura (potencia por bin)",
+        xlabel="Frecuencia [kHz]",
+        ylabel="dB respecto del fondo de escala",
+        ylim=(spectrum_dB.max() - 40, spectrum_dB.max() + 5),
+    )
+    ax_s.grid(True)
+
+    # Dechirp de los up-chirps: la señal se concentra en el bin 0 y el ruido sigue repartido
+    if start is not None:
+        D = np.mean(np.abs(dechirp_fft(r[start : start + p.n_upchirps * p.M], p)) ** 2, axis=0)
+        ax_d.plot(10 * np.log10(D / D.max()))
+        ax_d.set(
+            title=f"Up-chirps del preámbulo después del dechirp (promedio de {p.n_upchirps})",
+            xlabel="Bin",
+            ylabel="dB respecto del pico",
+            ylim=(-50, 3),
+        )
+        ax_d.grid(True)
+    fig.tight_layout()
+    return fig
+
+
+def sdr_tone(captures: np.ndarray, gains_dB: np.ndarray, k: int, p: LoRaParams) -> Figure:
+    """Capturas de un tono (exponencial compleja en el bin `k` de la FFT) con distintas ganancias
+    del RX, una por fila: muestras contra el fondo de escala, espectro y plano I/Q.
+
+    Args:
+        captures (np.ndarray): Capturas (una por fila) de un número entero de períodos del tono.
+        gains_dB (np.ndarray): Ganancia del RX de cada captura, en dB.
+        k (int): Bin del tono en la FFT de cada captura.
+        p (LoRaParams): Parámetros del sistema.
+
+    Returns:
+        Figure: Figura con los tres gráficos por captura.
+    """
+
+    captures = np.atleast_2d(captures)
+    fig, axes = plt.subplots(
+        len(captures),
+        3,
+        figsize=(14, 3.6 * len(captures)),
+        gridspec_kw={"width_ratios": [2, 2, 1.3]},
+        squeeze=False,
+    )
+    square = ADC_FULL_SCALE * np.array([-1, 1, 1, -1, -1])
+    for r, gain, (ax_t, ax_f, ax_iq) in zip(captures, gains_dB, axes):
+        cycles = 8 * r.size // k  # Muestras de 8 ciclos del tono
+        ax_t.plot(np.real(r)[:cycles], ".-", lw=0.8, label="I")
+        ax_t.plot(np.imag(r)[:cycles], ".-", lw=0.8, label="Q")
+        _full_scale_lines(ax_t)
+        ax_t.set(title=f"Ganancia {gain:.0f} dB", xlabel="Muestra", ylabel="Amplitud")
+        ax_t.legend(loc="lower right")
+
+        # Un número entero de períodos: el tono cae justo en un bin y no se desparrama
+        X = np.fft.fftshift(np.fft.fft(r)) / r.size
+        f = np.fft.fftshift(np.fft.fftfreq(r.size, p.T)) / 1e3
+        X_dB = 20 * np.log10(np.abs(X) / ADC_FULL_SCALE + 1e-12)
+        ax_f.plot(f, X_dB, color="gray", lw=0.6)
+        for bin_, name, marker in ((k, "Tono", "o"), (-k, "Imagen", "s"), (0, "Fuga del LO", "^")):
+            i = r.size // 2 + bin_  # Índice después de fftshift
+            ax_f.plot(f[i], X_dB[i], marker, label=f"{name}: {X_dB[i]:.0f} dB")
+        ax_f.set(
+            title="Espectro",
+            xlabel="Frecuencia [kHz]",
+            ylabel="dB respecto del fondo de escala",
+            ylim=(-140, 10),
+        )
+        ax_f.grid(True)
+        ax_f.legend(loc="upper left", fontsize="small")
+
+        ax_iq.plot(np.real(r), np.imag(r), ",", alpha=0.5)
+        ax_iq.plot(square, np.roll(square, 1), "r--", lw=0.8)
+        ax_iq.set(title="Plano I/Q", xlabel="I", ylabel="Q", aspect="equal")
+    fig.suptitle("Tono con distintas ganancias del RX")
+    fig.tight_layout()
+    return fig
+
+
+def snr_vs_atten(attens_dB: np.ndarray, snr_dB: np.ndarray, fer_range_dB: np.ndarray) -> Figure:
+    """SNR medido sin ruido agregado vs atenuación del TX, junto con el rango de SNR donde el FER
+    simulado pasa de casi 1 a casi 0.
+
+    Args:
+        attens_dB (np.ndarray): Atenuaciones del TX.
+        snr_dB (np.ndarray): SNR medido para cada atenuación.
+        fer_range_dB (np.ndarray): SNR donde se mide el FER (se marca de su mínimo a su máximo).
+
+    Returns:
+        Figure: Figura del SNR.
+    """
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.axhspan(min(fer_range_dB), max(fer_range_dB), color="C1", alpha=0.2, label="Rango del FER")
+    ax.plot(attens_dB, snr_dB, "o-", label="SNR medido")
+    ax.set(title="Sin ruido agregado", xlabel="Atenuación del TX [dB]", ylabel="SNR [dB]")
+    ax.grid(True)
+    ax.legend()
+    fig.tight_layout()
+    return fig
+
+
+def snr_added(SNRs_tx_dB: np.ndarray, snr_measured_dB: np.ndarray, snr_hw_dB: float) -> Figure:
+    """SNR medido vs SNR del ruido agregado en el TX, con el modelo 1/SNR = 1/SNR_tx + 1/SNR_hw.
+
+    Args:
+        SNRs_tx_dB (np.ndarray): SNR del ruido agregado en el TX.
+        snr_measured_dB (np.ndarray): SNR medido para cada SNR agregado.
+        snr_hw_dB (float): SNR del equipo, medido sin ruido agregado.
+
+    Returns:
+        Figure: Figura del SNR.
+    """
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    snr_tx = np.linspace(SNRs_tx_dB.min(), SNRs_tx_dB.max())
+    model = -10 * np.log10(10 ** (-snr_tx / 10) + 10 ** (-snr_hw_dB / 10))
+    ax.plot(snr_tx, snr_tx, "k:", lw=0.8, label="Medido = agregado")
+    ax.plot(snr_tx, model, color="C0", label=f"Modelo, $SNR_{{hw}}$ = {snr_hw_dB:.1f} dB")
+    ax.plot(SNRs_tx_dB, snr_measured_dB, "o", color="C0", label="Medido")
+    ax.set(
+        title="Con ruido agregado en el TX (atenuación de -10 dB)",
+        xlabel="SNR agregado [dB]",
+        ylabel="SNR medido [dB]",
+    )
+    ax.grid(True)
+    ax.legend()
+    fig.tight_layout()
+    return fig
+
+
+def fer_sdr(
+    SNRs_sim_dB: np.ndarray,
+    fer_sim: np.ndarray,
+    measured: dict[str, tuple[np.ndarray, np.ndarray]],
+    n_frames: int,
+) -> Figure:
+    """FER medido con el SDR sobre la curva simulada en canal plano, en el rango de SNR de la
+    simulación. FER = 0 no entra en la escala logarítmica: esos puntos quedan debajo de
+    1 / n_frames, el menor FER que se puede medir.
+
+    Args:
+        SNRs_sim_dB (np.ndarray): SNR de la simulación, en dB.
+        fer_sim (np.ndarray): FER simulado para cada SNR.
+        measured (dict[str, tuple[np.ndarray, np.ndarray]]): SNR medido y FER de cada serie del
+            SDR, por nombre.
+        n_frames (int): Tramas medidas por punto.
+
+    Returns:
+        Figure: Figura del FER.
+    """
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(SNRs_sim_dB, fer_sim, label="Simulación (canal plano)")
+    for (label, (snr, fer)), marker in zip(measured.items(), ["s", "o", "^"]):
+        fer = np.asarray(fer)
+        ax.plot(snr, np.where(fer > 0, fer, np.nan), marker, ls="none", label=label)
+    ax.axhline(1 / n_frames, color="gray", ls=":", label=f"1 error en {n_frames} tramas")
+    ax.set_yscale("log")
+    ax.set_xlim(SNRs_sim_dB.min() - 0.5, SNRs_sim_dB.max() + 0.5)
+    ax.set(title="FER: simulación y SDR", xlabel="SNR [dB]", ylabel="FER")
+    ax.grid(True, which="both")
+    ax.legend()
+    fig.tight_layout()
     return fig

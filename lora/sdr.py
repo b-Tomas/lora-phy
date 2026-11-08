@@ -1,0 +1,472 @@
+"""Transmisión y recepción de tramas con un ADALM-Pluto (pyadi-iio).
+
+El mismo Pluto transmite y recibe: TX y RX comparten el reloj y el oscilador local, así que la
+señal recibida no tiene corrimiento de frecuencia y tiene exactamente el período del TX.
+
+El TX repite un buffer de varias tramas distintas (silencio de largo al azar + preámbulo + payload
+cada una), y el RX captura el buffer completo y tres tramas más. `receive` busca las tramas en la
+captura sin saber dónde están, como un receptor real. `evaluate` sí conoce el buffer transmitido:
+lo ubica en la captura para contar los errores y medir el SNR.
+
+En el laboratorio el SNR no baja de ~14 dB ni con la máxima atenuación del TX: para medir el FER
+en la zona de transición, `measure` le suma ruido blanco a las tramas antes de transmitirlas.
+
+Chequeo previo, antes de correr el notebook:
+
+    uv run python -m lora.sdr ip:192.168.1.31
+"""
+
+import argparse
+import sys
+from contextlib import contextmanager
+from pathlib import Path
+from typing import NamedTuple
+
+import numpy as np
+
+from . import params
+from .channel import noise_from_SNR
+from .detection import detect_full
+from .metrics import power
+from .params import LoRaParams
+from .rx import demodulator
+from .tx import modulator, preamble
+
+LO_FREQ = 905e6  # Portadora, dentro de la banda permitida de 900 a 930 MHz
+
+TX_SCALE = 2**14  # Pico de I y Q del TX: pyadi espera muestras en ±2^14
+ADC_FULL_SCALE = 2**11  # El ADC del AD9363 es de 12 bits: muestras en ±2048
+# Valor eficaz que busca el AGC slow_attack del AD9363, en dB respecto del fondo de escala: lo
+# mantiene entre los umbrales de -10 y -12 dB (los del Pluto por defecto). No lleva el pico al
+# fondo de escala: deja margen para los picos de una señal gaussiana
+AGC_TARGET_DB = -11
+ADC_NOISE_FLOOR = 1 / 6  # Ruido de cuantización complejo, 2 * Δ²/12 con Δ = 1
+TX_ATTEN_RANGE_DB = (-89, -3)  # Con menos de 3 dB de atenuación se puede dañar el receptor
+
+# Buffers del RX descartados después de cambiar el TX, para que la captura sea de la señal nueva.
+# Subir si quedan restos de la señal anterior (FER = 1 en loopback)
+FLUSH = 5
+# Buffers que se dejan pasar para que el AGC converja. Subir si la ganancia elegida varía
+AGC_SETTLE = 15
+# Muestras de los buffers descartados: cortos, para no traer muestras de más por la VPN
+SETTLE_SIZE = 2**13
+
+
+def connect(
+    uri: str, p: LoRaParams, loopback: int, lo_freq: float = LO_FREQ, tx_atten_dB: float = -10
+):
+    """Abre el Pluto y lo configura para transmitir y recibir tramas.
+
+    Args:
+        uri (str): Dirección del SDR, por ejemplo "ip:192.168.1.31".
+        p (LoRaParams): Parámetros del sistema. B es la frecuencia de muestreo y el ancho de banda.
+        loopback (int): 0 = por el aire, 1 = loopback digital (no pasa por el ADC ni el DAC).
+        lo_freq (float): Frecuencia de la portadora de TX y RX, en Hz.
+        tx_atten_dB (float): Atenuación del TX (`set_tx_atten`).
+
+    Returns:
+        adi.Pluto: SDR configurado, con el RX en control automático de ganancia.
+    """
+
+    import adi  # Opcional (extra `sdr`): el resto del paquete no lo necesita
+
+    sdr = adi.Pluto(uri)  # pyright: ignore[reportAbstractUsage]
+    sdr.loopback = loopback
+    sdr.sample_rate = int(p.B)
+    sdr.tx_rf_bandwidth = int(p.B)  # Filtro antialiasing: el ancho de banda de la señal
+    sdr.rx_rf_bandwidth = int(p.B)
+    sdr.tx_lo = int(lo_freq)
+    sdr.rx_lo = int(lo_freq)
+    set_tx_atten(sdr, tx_atten_dB)
+    sdr.gain_control_mode_chan0 = "slow_attack"
+    sdr.tx_cyclic_buffer = True
+    return sdr
+
+
+def set_tx_atten(sdr, tx_atten_dB: float) -> None:
+    """Fija la atenuación del TX, en dB (negativa). La potencia máxima del TX es 10 dBm: con
+    -10 dB transmite 0 dBm (1 mW). Rechaza valores fuera de TX_ATTEN_RANGE_DB."""
+
+    low, high = TX_ATTEN_RANGE_DB
+    if not low <= tx_atten_dB <= high:
+        raise ValueError(f"Atenuación del TX fuera de [{low}, {high}] dB: {tx_atten_dB}")
+    sdr.tx_hardwaregain_chan0 = float(tx_atten_dB)  # pyadi rechaza los enteros de numpy
+
+
+def release(sdr) -> None:
+    """Deja el SDR sin interferir: máxima atenuación, TX y RX en frecuencias distintas y TX en
+    ceros. El TX del Pluto no se puede apagar."""
+
+    sdr.tx_destroy_buffer()
+    set_tx_atten(sdr, TX_ATTEN_RANGE_DB[0])
+    sdr.tx_lo = int(2400e6)
+    sdr.rx_lo = int(950e6)
+    sdr.tx(np.zeros(2048, dtype=complex))
+
+
+@contextmanager
+def session(uri: str, p: LoRaParams, loopback: int, lo_freq: float = LO_FREQ):
+    """`connect` para usar con `with`: al salir, aunque haya un error, llama a `release`."""
+
+    sdr = connect(uri, p, loopback, lo_freq)
+    try:
+        yield sdr
+    finally:
+        release(sdr)
+
+
+class SimulatedPluto:
+    """Pluto ideal, para probar sin hardware: `rx` devuelve el buffer del TX repetido a partir de
+    una muestra al azar (canal plano, sin ruido propio ni corrimiento de frecuencia), saturado y cuantizado como en el
+    ADC.
+
+    Con la ganancia GAIN_REF_DB el pico del TX llega a la mitad del fondo de escala, como en el
+    loopback digital del Pluto. En "slow_attack" la ganancia lleva el valor eficaz a AGC_TARGET_DB, como
+    el AGC."""
+
+    rx_buffer_size = 0
+    GAIN_REF_DB = 30.0
+    rx_hardwaregain_chan0 = GAIN_REF_DB
+    gain_control_mode_chan0 = "manual"
+
+    def tx(self, x: np.ndarray) -> None:
+        self.x = x
+
+    def rx(self) -> np.ndarray:
+        if self.gain_control_mode_chan0 == "slow_attack":
+            self.rx_hardwaregain_chan0 = round(
+                self.GAIN_REF_DB
+                + AGC_TARGET_DB
+                - 10 * np.log10(power(self.x) / (2 * TX_SCALE) ** 2)
+            )
+        r = np.resize(np.roll(self.x, params.rng.integers(self.x.size)), self.rx_buffer_size)
+        gain = 10 ** ((self.rx_hardwaregain_chan0 - self.GAIN_REF_DB) / 20)
+        r = np.round(r * ADC_FULL_SCALE / (2 * TX_SCALE) * gain)
+        lo, hi = -ADC_FULL_SCALE, ADC_FULL_SCALE - 1
+        return np.clip(np.real(r), lo, hi) + 1j * np.clip(np.imag(r), lo, hi)
+
+    def tx_destroy_buffer(self) -> None:
+        pass
+
+    def rx_destroy_buffer(self) -> None:
+        pass
+
+
+# --- Transmisión y captura -------------------------------------------------------------------
+
+
+def frames(symbols: np.ndarray, gaps: np.ndarray, p: LoRaParams) -> np.ndarray:
+    """Buffer del TX sin ruido: una trama por fila de `symbols`, cada una con su silencio antes
+    del preámbulo.
+
+    Args:
+        symbols (np.ndarray): Símbolos del payload de cada trama (n_frames, num_symbols).
+        gaps (np.ndarray): Muestras de silencio antes de cada trama (n_frames).
+        p (LoRaParams): Parámetros del sistema.
+
+    Returns:
+        np.ndarray: Muestras del buffer.
+    """
+
+    return np.concatenate(
+        [np.concatenate([np.zeros(g), preamble(p), modulator(s, p)]) for s, g in zip(symbols, gaps)]
+    )
+
+
+def send(sdr, x: np.ndarray) -> None:
+    """Transmite `x` en forma cíclica, con pico TX_SCALE en I y Q, y descarta los buffers del RX
+    con la señal anterior."""
+
+    sdr.tx_destroy_buffer()
+    sdr.rx_destroy_buffer()
+    sdr.rx_buffer_size = SETTLE_SIZE
+    sdr.tx(x / max(np.abs(np.real(x)).max(), np.abs(np.imag(x)).max()) * TX_SCALE)
+    _flush(sdr)
+
+
+def _flush(sdr, n: int = FLUSH) -> None:
+    for _ in range(n):
+        sdr.rx()
+
+
+def calibrate_gain(sdr, margin_dB: float = 0) -> float:
+    """Deja actuar al AGC sobre la señal que se está transmitiendo y fija la ganancia.
+
+    El control automático de ganancia (AGC) lleva el valor eficaz de la señal a AGC_TARGET_DB:
+    aprovecha el rango del ADC y deja margen para los picos. Después se pasa a ganancia manual con
+    ese valor: con el AGC activo, el silencio y la trama se recibirían con ganancias distintas.
+
+    Args:
+        sdr (adi.Pluto): SDR transmitiendo la señal.
+        margin_dB (float): Ganancia que se resta a la del AGC, si la señal satura.
+
+    Returns:
+        float: Ganancia fija del RX, en dB.
+    """
+
+    sdr.gain_control_mode_chan0 = "slow_attack"
+    _flush(sdr, AGC_SETTLE)
+    gain = sdr.rx_hardwaregain_chan0 - margin_dB
+    sdr.gain_control_mode_chan0 = "manual"
+    sdr.rx_hardwaregain_chan0 = gain
+    _flush(sdr)
+    return gain
+
+
+def record(sdr, x: np.ndarray, n_samples: int, calibrate: bool = True) -> tuple[np.ndarray, float]:
+    """Transmite `x` (`send`), calibra la ganancia si se pide y captura `n_samples` muestras.
+
+    La captura usa un buffer del RX nuevo: todas sus muestras son posteriores a los cambios.
+
+    Returns:
+        tuple[np.ndarray, float]: Captura y ganancia del RX, en dB.
+    """
+
+    send(sdr, x)
+    if calibrate:
+        calibrate_gain(sdr)
+    sdr.rx_destroy_buffer()
+    sdr.rx_buffer_size = n_samples
+    return sdr.rx(), sdr.rx_hardwaregain_chan0
+
+
+def measure(
+    sdr,
+    p: LoRaParams,
+    n_frames: int,
+    num_symbols: int,
+    gap_range: tuple[int, int],
+    SNR_dB: float = np.inf,
+    calibrate: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Transmite un buffer de `n_frames` tramas con payloads y silencios al azar, y lo captura.
+
+    Cada silencio tiene un largo al azar, en muestras, entre gap_range[0] y gap_range[1] símbolos: el receptor
+    no puede predecir dónde empieza la trama siguiente. La captura tiene el buffer completo y por lo
+    menos tres períodos más (silencio y trama): cada trama aparece entera al menos una vez después
+    de los dos primeros (`evaluate`).
+
+    Args:
+        sdr (adi.Pluto): SDR configurado.
+        p (LoRaParams): Parámetros del sistema.
+        n_frames (int): Tramas del buffer.
+        num_symbols (int): Símbolos del payload por trama.
+        gap_range (tuple[int, int]): Largo mínimo y máximo del silencio antes de cada trama, en símbolos.
+        SNR_dB (float): SNR del ruido que se suma en el TX, como en `channel.transmit_frame`
+            (respecto de la potencia de la trama, también sobre el silencio). Infinito: sin ruido.
+        calibrate (bool): Calibrar la ganancia del RX con el AGC (`calibrate_gain`).
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray, float]: Símbolos transmitidos
+        (n_frames, num_symbols), muestras de silencio antes de cada trama, captura y ganancia del
+        RX en dB.
+    """
+
+    symbols = params.rng.integers(0, p.M, size=(n_frames, num_symbols))
+    gaps = params.rng.integers(gap_range[0] * p.M, gap_range[1] * p.M + 1, size=n_frames)
+    x = frames(symbols, gaps, p)
+    # Potencia del ruido respecto de la potencia de la trama, como en `channel.transmit_frame`
+    tx = x + noise_from_SNR(np.resize(preamble(p), x.size), SNR_dB)
+    # Largo de la captura: el de n_frames + 3 períodos con el silencio máximo. Es mayor o igual que
+    # el buffer más tres períodos, y no depende de los silencios: las capturas se pueden apilar
+    longest = gap_range[1] * p.M + p.preamble_len + num_symbols * p.M
+    r, gain = record(sdr, tx, (n_frames + 3) * longest, calibrate)
+    return symbols, gaps, r, gain
+
+
+def full_scale(r: np.ndarray) -> tuple[float, float]:
+    """Uso del rango del ADC: pico de I y Q como fracción del fondo de escala (1 = satura) y
+    potencia media en dB respecto del fondo de escala."""
+
+    peak = max(np.abs(np.real(r)).max(), np.abs(np.imag(r)).max()) / ADC_FULL_SCALE
+    return float(peak), float(10 * np.log10(power(r) / ADC_FULL_SCALE**2))
+
+
+# --- Recepción y medición (sin SDR) ----------------------------------------------------------
+
+
+def receive(
+    r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float, num_symbols: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Receptor: busca las tramas en una captura sin saber dónde están.
+
+    Recorre la captura con una ventana de dos tramas de largo y busca un preámbulo en ella con
+    `detect_full`. Si lo encuentra, demodula el payload y la ventana siguiente empieza donde
+    termina la trama. Si no, la ventana avanza una trama: una trama que empieza en la primera
+    mitad de la ventana entra entera en ella, y la que empieza en la segunda mitad, en la ventana
+    siguiente.
+
+    La primera ventana empieza en el símbolo de menor energía de las dos primeras tramas de largo,
+    que con SNR alto cae en un silencio: si empezara a mitad de un payload, podría confundir sus
+    chirps con el preámbulo.
+
+    Args:
+        r (np.ndarray): Captura.
+        p (LoRaParams): Parámetros del sistema.
+        noise_power (float): Potencia del ruido por muestra (sigma^2).
+        P_FA (float): Probabilidad de falsa alarma por símbolo.
+        num_symbols (int): Símbolos del payload por trama.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Muestra de inicio de cada trama detectada y su payload
+        demodulado (n_detectadas, num_symbols).
+    """
+
+    frame_len = p.preamble_len + num_symbols * p.M
+    energy = np.convolve(np.abs(r[: 2 * frame_len]) ** 2, np.ones(p.M), "valid")
+    pos = int(np.argmin(energy))
+    starts, payloads = [], []
+    while r.size - pos >= frame_len:
+        start = detect_full(r[pos : pos + 2 * frame_len], p, noise_power, P_FA)
+        if start is None:
+            pos += frame_len
+            continue
+        begin = pos + start + p.preamble_len
+        payload = r[begin : begin + num_symbols * p.M]
+        if payload.size < num_symbols * p.M:
+            break  # Trama cortada al final de la captura
+        starts.append(pos + start)
+        payloads.append(demodulator(payload, p))
+        pos = begin + payload.size
+    return np.array(starts, dtype=int), np.array(payloads, dtype=int).reshape(-1, num_symbols)
+
+
+def snr_dB(r: np.ndarray, x: np.ndarray) -> float:
+    """SNR de una captura alineada con el buffer transmitido sin ruido `x`, respecto de la
+    potencia de la trama (como en la simulación).
+
+    Estimador asistido por datos: se estima por mínimos cuadrados la amplitud compleja de la señal
+    recibida (ganancia y fase del canal), y lo que queda al restarla es el ruido, incluyendo la
+    distorsión del equipo.
+    """
+
+    a = np.vdot(x, r) / np.vdot(x, x)
+    noise = max(power(r - a * x), ADC_NOISE_FLOOR)
+    return float(10 * np.log10(np.abs(a) ** 2 * power(x[x != 0]) / noise))
+
+
+class Evaluation(NamedTuple):
+    """Resultado de `evaluate` para una captura."""
+
+    errors: np.ndarray  # Error de cada trama transmitida (bool)
+    timing: np.ndarray  # Inicio detectado menos inicio real, en muestras, de las detectadas
+    snr: float  # SNR medido, en dB
+    starts: np.ndarray  # Inicios detectados por el receptor, en muestras de la captura
+
+
+def evaluate(
+    r: np.ndarray,
+    symbols: np.ndarray,
+    gaps: np.ndarray,
+    p: LoRaParams,
+    P_FA: float,
+) -> Evaluation:
+    """Pasa una captura de `measure` por el receptor y la compara con lo transmitido.
+
+    El receptor (`receive`) no sabe dónde están las tramas. La medición sí: ubica el buffer
+    transmitido en la captura con el máximo de la correlación circular, y de ahí sale el inicio
+    real de cada trama. La potencia del ruido del receptor se estima en el silencio antes de cada
+    trama, donde solo hay ruido.
+
+    Args:
+        r (np.ndarray): Captura de `measure`.
+        symbols (np.ndarray): Símbolos transmitidos (n_frames, num_symbols).
+        gaps (np.ndarray): Muestras de silencio antes de cada trama (n_frames).
+        p (LoRaParams): Parámetros del sistema.
+        P_FA (float): Probabilidad de falsa alarma por símbolo.
+
+    Returns:
+        Evaluation: Errores, error del inicio detectado, SNR e inicios detectados.
+    """
+
+    x = frames(symbols, gaps, p)
+    L, num_symbols = x.size, symbols.shape[1]
+    frame_len = p.preamble_len + num_symbols * p.M
+    longest = gaps.max() + frame_len
+
+    # Inicio de cada trama en el buffer: los silencios hasta ella inclusive y las tramas anteriores
+    in_buffer = np.cumsum(gaps) + np.arange(len(gaps)) * frame_len
+    # Retardo de la captura: la muestra i del buffer está en la muestra (i + delay) mod L
+    delay = int(np.argmax(np.abs(np.fft.ifft(np.fft.fft(r[:L]) * np.conj(np.fft.fft(x))))))
+    # Inicio real de cada trama, una vez cada una, después de los dos primeros períodos más
+    # largos: el receptor se sincroniza en ellos y puede perder alguna trama
+    real = 2 * longest + (in_buffer + delay - 2 * longest) % L
+
+    noise = power(np.concatenate([r[t - g : t] for t, g in zip(real, gaps)]))
+    starts, payloads = receive(r, p, max(noise, ADC_NOISE_FLOOR), P_FA, num_symbols)
+    snr = snr_dB(np.roll(r[:L], -delay), x)
+    if starts.size == 0:
+        return Evaluation(np.ones(len(symbols), dtype=bool), starts, snr, starts)
+
+    # Cada trama transmitida se compara con la detección más cercana a su inicio real
+    nearest = np.abs(starts[:, None] - real).argmin(axis=0)
+    timing = starts[nearest] - real
+    found = np.abs(timing) < frame_len // 2
+    errors = ~(found & (payloads[nearest] == symbols).all(axis=1))
+    return Evaluation(errors, timing[found], snr, starts)
+
+
+def save(path: str | Path, captures: np.ndarray, **meta) -> None:
+    """Guarda capturas y metadatos en un .npz. Las muestras del ADC son enteras: van en int16."""
+
+    iq = np.stack([np.real(captures), np.imag(captures)], axis=-1).round().astype(np.int16)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, iq=iq, **meta)
+
+
+def load(path: str | Path) -> tuple[np.ndarray, dict]:
+    """Carga un .npz de `save`: capturas complejas y metadatos."""
+
+    with np.load(path) as npz:
+        data = dict(npz)
+    iq = data.pop("iq").astype(float)
+    return iq[..., 0] + 1j * iq[..., 1], data
+
+
+# --- Chequeo previo --------------------------------------------------------------------------
+
+
+def check(uri: str, lo_freq: float = LO_FREQ) -> bool:
+    """Verifica el SDR: tramas por loopback digital y por el aire, con la ganancia calibrada.
+    Imprime el resultado de cada paso.
+
+    Args:
+        uri (str): Dirección del SDR.
+        lo_freq (float): Frecuencia de la portadora, en Hz.
+
+    Returns:
+        bool: True si las tramas se decodifican en los dos casos y el AGC llevó la señal al valor
+        eficaz esperado sin saturar.
+    """
+
+    # Los mismos parámetros que el notebook
+    p = LoRaParams(SF=8, B=1e6)
+    num_symbols, gap_range = 10, (5, 10)
+    P_FA = p.Ts / 60  # Una falsa alarma por minuto
+
+    print(f"Conectando a {uri}...")
+    with session(uri, p, loopback=1, lo_freq=lo_freq) as sdr:
+        symbols, gaps, r, _ = measure(sdr, p, 3, num_symbols, gap_range, calibrate=False)
+        ok_loop = not evaluate(r, symbols, gaps, p, P_FA).errors.any()
+        print(f"Loopback digital: {'OK' if ok_loop else 'FALLA'} (pico {full_scale(r)[0]:.0%})")
+
+        sdr.loopback = 0
+        symbols, gaps, r, gain = measure(sdr, p, 3, num_symbols, gap_range)
+        peak, rms = full_scale(r)
+        ok_scale = peak < 1 and abs(rms - AGC_TARGET_DB) <= 3
+        print(f"Ganancia del RX: {gain} dB, nivel {rms:.0f} dB, pico {peak:.0%}", end="")
+        print("" if ok_scale else f" (se esperaba {AGC_TARGET_DB} dB sin saturar)")
+
+        errors, _, snr, _ = evaluate(r, symbols, gaps, p, P_FA)
+        print(f"Por el aire ({lo_freq / 1e6:.0f} MHz): {'FALLA' if errors.any() else 'OK'}", end="")
+        print(f", SNR {snr:.1f} dB (sin ruido agregado: lo limita la distorsión del equipo)")
+
+    return ok_loop and ok_scale and not errors.any()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Chequeo del ADALM-Pluto antes del notebook")
+    parser.add_argument("uri", help='dirección del SDR, por ejemplo "ip:192.168.1.31"')
+    parser.add_argument("--lo", type=float, default=LO_FREQ, help="portadora en Hz")
+    args = parser.parse_args()
+    sys.exit(0 if check(args.uri, args.lo) else 1)
