@@ -12,6 +12,7 @@ def test_measure_and_evaluate(SNR_dB, all_errors):
     symbols, gaps, r, _ = sdr.measure(sdr.SimulatedPluto(), p, 4, NUM_SYMBOLS, GAP, SNR_dB)
     errors, timing, _, _ = sdr.evaluate(r, symbols, gaps, p, 1e-3)
     assert errors.size == 4
+    assert sdr.frames(symbols, gaps, p).size % 2 == 0  # El Pluto repite mal los buffers impares
     assert errors.all() if all_errors else not errors.any() and not timing.any()
 
 

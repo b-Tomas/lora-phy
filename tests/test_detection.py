@@ -102,3 +102,9 @@ def test_roc():
     assert P_FA[0] == 0 and P_D[0] == 0  # Umbral infinito
     assert np.any((P_FA == 0) & (P_D == 1))
     assert P_FA[-1] == 1 and P_D[-1] == 1  # Umbral mínimo: siempre H1
+
+
+def test_detect_start_follows_the_peak():
+    # El primer cruce llega más de `span` posiciones antes del máximo, que sube de a escalones
+    statistic = np.array([0, 2, 0, 3, 0, 4, 0, 9, 1, 0, 1, 0, 0])
+    assert detection.detect_start(statistic, 1, 3) == 7

@@ -29,7 +29,9 @@ def detect_start(statistic: np.ndarray, threshold: float, span: int) -> int | No
     Declara la trama presente (H1) en la primera posición donde el estadístico alcanza el umbral.
     Como las posiciones anteriores al inicio ya se superponen con parte del preámbulo, el primer
     cruce suele llegar antes de tiempo: el inicio es el máximo del estadístico en las `span`
-    posiciones siguientes al cruce.
+    posiciones siguientes al cruce. La búsqueda se repite desde ese máximo hasta que ninguna de
+    las `span` posiciones siguientes lo supere, por si el cruce llegó más de `span` posiciones
+    antes del inicio (en el SDR, la cola de la trama anterior puede superar el umbral).
 
     Args:
         statistic (np.ndarray): Estadístico de detección de cada posición (muestra o ventana).
@@ -46,9 +48,12 @@ def detect_start(statistic: np.ndarray, threshold: float, span: int) -> int | No
     if above.size == 0:
         return None  # No se detecta la trama: H0 en todas las posiciones
 
-    # Máximo del estadístico a partir del primer cruce
-    first = above[0]
-    return int(first + np.argmax(statistic[first : first + span]))
+    # Máximo del estadístico a partir del primer cruce, hasta que no lo supere ninguna de las
+    # `span` posiciones siguientes
+    start = int(above[0])
+    while (peak := start + int(np.argmax(statistic[start : start + span]))) != start:
+        start = peak
+    return start
 
 
 def upchirp_correlation(r: np.ndarray, p: LoRaParams) -> np.ndarray:

@@ -38,7 +38,7 @@ Para Utilizar el SDR:
 sudo pacman -S libiio        # libiio 0.26 del sistema (pylibiio queda fijado < 1)
 uv sync --extra dev --extra sdr
 # Con la VPN del laboratorio conectada, verificar la conexión
-iio_info -u ip:192.168.1.31
+iio_info -u ip:192.168.1.32
 ```
 
 Después, poner `USE_SDR = True` en el notebook y ejecutar.

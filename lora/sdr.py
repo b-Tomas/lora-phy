@@ -44,7 +44,7 @@ def session(uri: str, p: LoRaParams, loopback: int):
     error, llama a `release`.
 
     Args:
-        uri (str): Dirección del SDR, por ejemplo "ip:192.168.1.31".
+        uri (str): Dirección del SDR, por ejemplo "ip:192.168.1.32".
         p (LoRaParams): Parámetros del sistema. B es la frecuencia de muestreo y el ancho de banda.
         loopback (int): 0 = por el aire, 1 = loopback digital (no pasa por el ADC ni el DAC).
 
@@ -210,7 +210,9 @@ def measure(
     """
 
     symbols = params.rng.integers(0, p.M, size=(n_frames, num_symbols))
-    gaps = params.rng.integers(gap_range[0] * p.M, gap_range[1] * p.M + 1, size=n_frames)
+    gaps = params.rng.integers(gap_range[0] * p.M, gap_range[1] * p.M, size=n_frames)
+    # Con un buffer de largo impar el TX del Pluto agrega una muestra en cada repetición
+    gaps[0] += gaps.sum() % 2  # El preámbulo y el payload tienen largo par
     x = frames(symbols, gaps, p)
     tx = x + noise_from_SNR(np.resize(preamble(p), x.size), SNR_dB)
     # Largo de la captura: el de n_frames + 3 períodos con el silencio máximo. Es mayor o igual que

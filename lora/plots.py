@@ -668,8 +668,9 @@ def fer_sdr(
     fer: np.ndarray,
     n_frames: int,
 ) -> Figure:
-    """FER medido con el SDR sobre la curva simulada en canal plano. FER = 0 no entra en la escala
-    logarítmica: esos puntos quedan debajo de 1 / n_frames, el menor FER que se puede medir.
+    """FER medido con el SDR sobre la curva simulada en canal plano. Los puntos sin errores no
+    entran en la escala logarítmica: se dibujan en 1 / n_frames, el menor FER que se puede medir,
+    como cota superior.
 
     Args:
         SNRs_sim_dB (np.ndarray): SNR de la simulación, en dB.
@@ -684,12 +685,20 @@ def fer_sdr(
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(SNRs_sim_dB, fer_sim, label="Simulación (canal plano)")
-    ax.plot(snr, fer, "o", label="SDR")
-    ax.axhline(1 / n_frames, color="gray", ls=":", label=f"1 error en {n_frames} tramas")
+    ax.plot(snr[fer > 0], fer[fer > 0], "o", color="C1", label="SDR")
+    ax.plot(
+        snr[fer == 0],
+        np.full(np.sum(fer == 0), 1 / n_frames),
+        "v",
+        color="C1",
+        mfc="none",
+        label=f"SDR, sin errores en {n_frames} tramas",
+    )
     ax.set_yscale("log", nonpositive="mask")
-    ax.set_xlim(SNRs_sim_dB.min() - 0.5, SNRs_sim_dB.max() + 0.5)
+    snrs = np.r_[SNRs_sim_dB, snr]
+    ax.set_xlim(snrs.min() - 0.5, snrs.max() + 0.5)
     ax.set(title="FER: simulación y SDR", xlabel="SNR [dB]", ylabel="FER")
-    ax.grid(True)
+    ax.grid(True, which="both", alpha=0.5)
     ax.legend()
     fig.tight_layout()
     return fig
