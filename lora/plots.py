@@ -525,29 +525,6 @@ def false_alarms(
     return fig
 
 
-def fer_vs_sf(SFs: np.ndarray, fer: dict[str, np.ndarray], title: str) -> Figure:
-    """FER en escala logarítmica vs SF, una curva por canal. Los puntos en 0 no se dibujan.
-
-    Args:
-        SFs (np.ndarray): Spreading factors simulados.
-        fer (dict[str, np.ndarray]): FER para cada SF, por nombre del canal.
-        title (str): Título del gráfico.
-
-    Returns:
-        Figure: Figura con las curvas.
-    """
-
-    fig, ax = plt.subplots()
-    for name, f in fer.items():
-        ax.plot(SFs, f, marker="o", label=name)
-    ax.set_yscale("log", nonpositive="mask")
-    ax.set_xticks(SFs)
-    ax.set(title=title, xlabel="SF", ylabel="FER")
-    ax.grid(True, which="both", alpha=0.5)
-    ax.legend()
-    return fig
-
-
 def sdr_tone(captures: np.ndarray, gains_dB: np.ndarray, k: int, p: LoRaParams) -> Figure:
     """Capturas de un tono en el bin `k` de la FFT con distintas ganancias del RX, una por fila:
     espectro y plano I/Q contra el fondo de escala del ADC.
