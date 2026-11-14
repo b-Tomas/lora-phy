@@ -342,24 +342,3 @@ def threshold(method: str, p: LoRaParams, noise_power: float, P_FA: float) -> fl
         return peaks_threshold(noise_power, P_FA / p.M, p)
     assert method == "freq", f"Método desconocido: {method}"
     return freq_threshold(P_FA, p)
-
-
-# --- Referencia ------------------------------------------------------------------------------
-
-
-def ideal_detector(gap: int) -> Detector:
-    """Detección ideal: el receptor conoce el inicio de la trama.
-
-    Sirve de referencia para separar los errores de demodulación de los de detección.
-
-    Args:
-        gap (int): Símbolos de silencio antes de la trama.
-
-    Returns:
-        Detector: Detector que siempre devuelve la muestra de inicio real, gap * 2^SF.
-    """
-
-    def detect(r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float) -> int:
-        return gap * p.M
-
-    return detect

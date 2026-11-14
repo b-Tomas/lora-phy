@@ -686,14 +686,15 @@ def fer_sdr(
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(SNRs_sim_dB, fer_sim, label="Simulación (canal plano)")
     ax.plot(snr[fer > 0], fer[fer > 0], "o", color="C1", label="SDR")
-    ax.plot(
-        snr[fer == 0],
-        np.full(np.sum(fer == 0), 1 / n_frames),
-        "v",
-        color="C1",
-        mfc="none",
-        label=f"SDR, sin errores en {n_frames} tramas",
-    )
+    if np.any(fer == 0):
+        ax.plot(
+            snr[fer == 0],
+            np.full(np.sum(fer == 0), 1 / n_frames),
+            "v",
+            color="C1",
+            mfc="none",
+            label=f"SDR, sin errores en {n_frames} tramas",
+        )
     ax.set_yscale("log", nonpositive="mask")
     snrs = np.r_[SNRs_sim_dB, snr]
     ax.set_xlim(snrs.min() - 0.5, snrs.max() + 0.5)

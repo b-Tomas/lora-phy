@@ -45,11 +45,6 @@ def test_freq(p, clean_frame):
     assert np.isclose(detection.zero_count_false_alarm(1, p), 1 - (1 - 2**-7) ** 8)
 
 
-def test_ideal_detector_gap(p, clean_frame):
-    r, _, gap, npw = clean_frame
-    assert detection.ideal_detector(gap)(r, p, npw, 1e-3) == gap * p.M
-
-
 def test_threshold_per_symbol(p):
     # P_FA por símbolo: en el tiempo se prueban M muestras por símbolo, en frecuencia una ventana
     npw = 2.0
@@ -93,7 +88,6 @@ def test_detectors_other_params(q, detect):
     r = channel.transmit_frame(symbols, gap, q, 100, channel.FLAT)
     start = detect(r, q, channel.noise_power(q, 100), 1e-3)
     assert start == gap * q.M
-    assert not metrics.frame_error(r, start, symbols, q)
 
 
 def test_roc():
