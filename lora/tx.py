@@ -88,6 +88,32 @@ def modulator(symbols: np.ndarray, p: LoRaParams) -> np.ndarray:
     return c.ravel()  # Aplanar a un vector unidimensional de chips
 
 
+def integrated_modulator(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
+    """Chirp con la fase igual a la integral del término de frecuencia de Ec. 2.
+
+    La frecuencia instantánea es ((s(nT_s) + k) mod 2^SF) B / 2^SF, una sola pasada de 0 a B por
+    símbolo. En las muestras vale e^{j2π (s + k/2) k / 2^SF}: Ec. 2 con k/2 en lugar de k. Solo se
+    usa para graficar; el resto del trabajo usa Ec. 2.
+
+    Args:
+        symbols (np.ndarray): Conjunto de símbolos $s(nT_s)$. 0 <= s < 2**SF.
+        p (LoRaParams): Parámetros del sistema.
+        L (int): Puntos por chip. Con L > 1 evalúa la fórmula también entre muestras.
+
+    Returns:
+        np.ndarray: Señal modulada (compleja) en el dominio del tiempo.
+    """
+
+    s = symbols.reshape(-1, 1)  # Vector columna de símbolos
+    k = np.arange(p.M * L) / L  # Chips, con L puntos por chip
+
+    # Integral de f de 0 a kT, en ciclos: (s + k/2) k / M, menos una vuelta por chip desde que f
+    # llega a B (el mod). En las muestras esa resta es un número entero de ciclos.
+    phase = (s + k / 2) * k / p.M - np.maximum(k - (p.M - s), 0)
+
+    return (np.exp(1j * 2 * np.pi * phase) / np.sqrt(p.M)).ravel()
+
+
 def preamble(p: LoRaParams) -> np.ndarray:
     """Genera el preámbulo de una trama LoRa.
 

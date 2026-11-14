@@ -14,7 +14,7 @@ from .params import LoRaParams
 from .rx import dechirp_fft
 from .sdr import ADC_FULL_SCALE
 from .simulation import RocCurves
-from .tx import instantaneous_frequency
+from .tx import instantaneous_frequency, integrated_modulator
 
 # Nombre y color de cada método de detección, por clave de método
 _METHODS = {
@@ -103,6 +103,49 @@ def modulated_signal(c: np.ndarray, symbols: np.ndarray, p: LoRaParams) -> Figur
     axs[3].set(title="Señal modulada (espectrograma)", xlabel="Muestras", ylabel="Frecuencia (kHz)")
     # Separación entre símbolos: un símbolo (Ts) son 2**SF muestras
     for ax in axs:
+        _vlines(ax, np.arange(len(symbols) + 1) * p.M)
+    fig.tight_layout()
+    return fig
+
+
+def integrated_chirp(symbols: np.ndarray, p: LoRaParams, L: int = 8) -> Figure:
+    """Chirp con fase integrada (`tx.integrated_modulator`): parte real y espectrograma.
+
+    La fórmula se evalúa también entre muestras, con L puntos por chip, para que se vea la forma
+    de la onda.
+
+    Args:
+        symbols (np.ndarray): Símbolos a modular.
+        p (LoRaParams): Parámetros del sistema.
+        L (int): Puntos por chip.
+
+    Returns:
+        Figure: Figura con los dos gráficos.
+    """
+
+    c = integrated_modulator(symbols, p)  # Muestras
+    c_fine = integrated_modulator(symbols, p, L)  # Entre muestras
+    t = np.arange(c_fine.size) / L  # Tiempo en muestras
+
+    fig, axs = plt.subplots(2, 1, figsize=(10, 4.5))
+    axs[0].plot(t, np.real(c_fine), lw=0.5)
+    axs[0].plot(np.real(c), "k.", ms=3)
+    axs[0].set(title="Fase integrada (parte real, puntos: muestras)", ylabel="Amplitud")
+    # Misma ventana que `_specgram` (_NFFT muestras), con L puntos por muestra
+    axs[1].specgram(
+        c_fine,
+        NFFT=_NFFT * L,
+        noverlap=_NFFT * L - L,
+        Fs=p.B * L / 1e3,
+        sides="twosided",
+        scale="linear",
+        xextent=(_NFFT / 2, c.size - _NFFT / 2),
+    )
+    axs[1].set(
+        title="Fase integrada (espectrograma)", ylabel="Frecuencia (kHz)", ylim=(0, p.B / 1e3)
+    )
+    for ax in axs:
+        ax.set(xlabel="Muestras")
         _vlines(ax, np.arange(len(symbols) + 1) * p.M)
     fig.tight_layout()
     return fig
