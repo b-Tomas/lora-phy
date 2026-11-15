@@ -106,35 +106,48 @@ def canal() -> None:
 
 
 # --- 3. Detección de trama (diagrama de secuencia) ------------------------------------------
+# Método 1 del notebook: correlación con el preámbulo completo (detection.detect_full)
 
 
 def deteccion() -> None:
     actores = ["Transmisor", "Canal", "Detector", "Demodulador"]
-    x = {a: i * 3.2 for i, a in enumerate(actores)}
+    x = {a: i * 3.4 for i, a in enumerate(actores)}
 
-    # (tipo, ...) en orden de arriba hacia abajo
+    # Pasos de arriba hacia abajo: mensajes entre actores, mensajes a sí mismo y notas
     pasos = [
-        ("nota", ["Detector"], "Calcula el estadístico en cada posición\ny lo compara con el umbral (Neyman-Pearson)"),
-        ("msg", "Transmisor", "Canal", "Silencio"),
+        ("nota", "Detector",
+         "Plantilla $p$: los 8 up-chirps del preámbulo\n"
+         "Para cada muestra $k$: $T[k] = |\\langle r_k, p \\rangle|^2$\n"
+         "Umbral: $\\eta = -8\\sigma^2 \\ln(P_{FA} / 2^{SF})$"),
+        ("msg", "Transmisor", "Canal", "Silencio (5 símbolos)"),
         ("msg", "Canal", "Detector", "Solo ruido"),
-        ("nota", ["Detector"], "Bajo el umbral\n(salvo falsa alarma)"),
+        ("nota", "Detector", "$T[k] < \\eta$\n(salvo falsa alarma)"),
         ("msg", "Transmisor", "Canal", "Preámbulo: 8 up-chirps"),
         ("msg", "Canal", "Detector", "Up-chirps + ruido"),
-        ("nota", ["Detector"], "Cruza el umbral y busca el máximo\n→ inicio estimado"),
+        ("nota", "Detector",
+         "$T[k]$ es un peine con picos cada $2^{SF}/2$:\n"
+         "el primer cruce $T[k] \\geq \\eta$ suele llegar\nantes del inicio"),
+        ("self", "Detector",
+         "Máximo de $T$ en los 8 símbolos siguientes,\n"
+         "repetido hasta que no aumente $\\rightarrow$ inicio $\\hat{k}$"),
         ("msg", "Transmisor", "Canal", "2.25 down-chirps"),
         ("msg", "Canal", "Detector", "Down-chirps + ruido"),
-        ("msg", "Transmisor", "Canal", "Payload"),
+        ("nota", "Detector", "No los usa: la plantilla\nsolo tiene up-chirps"),
+        ("msg", "Transmisor", "Canal", "Payload (10 símbolos)"),
         ("msg", "Canal", "Demodulador", "Payload + ruido"),
-        ("msg", "Detector", "Demodulador", "Inicio estimado"),
+        ("msg", "Detector", "Demodulador", "$\\hat{k}$: el payload empieza en $\\hat{k} + 10.25 \\cdot 2^{SF}$"),
         ("alt",),
     ]
 
-    alto = {"nota": 1.25, "msg": 0.8, "alt": 2.6}
+    alto = {"nota": 1.35, "msg": 0.8, "self": 1.3, "alt": 2.7}
     total = sum(alto[p[0]] for p in pasos) + 0.6
-    fig, ax = plt.subplots(figsize=(10, total * 0.62))
-    ax.set_xlim(-1.6, x["Demodulador"] + 1.6)
-    ax.set_ylim(-total - 0.9, 1.0)
+    fig, ax = plt.subplots(figsize=(11, total * 0.62))
+    ax.set_xlim(-1.6, x["Demodulador"] + 1.8)
+    ax.set_ylim(-total - 0.9, 1.6)
     ax.axis("off")
+    ax.text((x["Transmisor"] + x["Demodulador"]) / 2, 1.35,
+            "Detección por correlación con el preámbulo completo",
+            ha="center", va="center", fontsize=13, weight="bold")
 
     caja = dict(boxstyle="square,pad=0.45", fc="white", ec="black", lw=1.2)
     for a in actores:
@@ -152,27 +165,33 @@ def deteccion() -> None:
                         arrowprops=dict(arrowstyle="-|>", color="black", lw=1.2))
             ax.text((x[a] + x[b]) / 2, yc + 0.02, texto, ha="center", va="bottom", fontsize=11,
                     bbox=dict(boxstyle="square,pad=0.1", fc="white", ec="none"))
+        elif p[0] == "self":
+            _, a, texto = p
+            ax.annotate("", xy=(x[a], yc - 0.3), xytext=(x[a], yc + 0.3),
+                        arrowprops=dict(arrowstyle="-|>", color="black", lw=1.2,
+                                        connectionstyle="arc,angleA=0,angleB=0,armA=28,armB=28,rad=6"))
+            ax.text(x[a] + 0.65, yc, texto, ha="left", va="center", fontsize=10.5,
+                    bbox=dict(boxstyle="square,pad=0.1", fc="white", ec="none"))
         elif p[0] == "nota":
-            _, (a,), texto = p
+            _, a, texto = p
             ax.text(x[a], yc, texto, ha="center", va="center", fontsize=10.5,
                     bbox=dict(boxstyle="square,pad=0.4", fc="0.93", ec="0.4", lw=0.8))
         elif p[0] == "alt":
-            x0, x1 = x["Detector"] - 1.5, x["Demodulador"] + 1.5
+            x0, x1 = x["Detector"] - 1.6, x["Demodulador"] + 1.6
             top, mid, bot = y - 0.1, y - dy / 2, y - dy + 0.1
             # Fondo blanco para tapar las líneas de vida dentro del recuadro
             ax.add_patch(plt.Rectangle((x0, bot), x1 - x0, top - bot, fc="white", ec="black",
                                        lw=1, zorder=2.5))
             ax.plot([x0, x1], [mid, mid], color="black", lw=0.8, ls="--", zorder=3)
             ax.text(x0 + 0.1, top - 0.08, "alt", ha="left", va="top", fontsize=10, weight="bold")
-            ax.text((x0 + x1) / 2, top - 0.15, "[inicio estimado = inicio real]",
+            ax.text((x0 + x1) / 2, top - 0.12, "[$\\hat{k}$ = inicio real, $5 \\cdot 2^{SF}$]",
                     ha="center", va="top", fontsize=10.5)
-            ax.text((x0 + x1) / 2, (top + mid) / 2 - 0.2,
-                    "Trama detectada → se demodula el payload",
+            ax.text((x0 + x1) / 2, (top + mid) / 2 - 0.22, "Trama detectada",
                     ha="center", va="center", fontsize=11)
-            ax.text((x0 + x1) / 2, mid - 0.15, "[no detectada o inicio corrido]",
+            ax.text((x0 + x1) / 2, mid - 0.12,
+                    "[sin cruce del umbral, o $\\hat{k}$ corrido por un pico lateral]",
                     ha="center", va="top", fontsize=10.5)
-            ax.text((x0 + x1) / 2, (mid + bot) / 2 - 0.2,
-                    "Trama perdida (cuenta para el FER)",
+            ax.text((x0 + x1) / 2, (mid + bot) / 2 - 0.22, "Trama perdida (cuenta para el FER)",
                     ha="center", va="center", fontsize=11)
         y -= dy
 
