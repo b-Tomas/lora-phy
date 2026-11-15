@@ -11,6 +11,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from .params import LoRaParams
+from .rx import dechirp, dechirp_fft
 from .sdr import ADC_FULL_SCALE
 from .simulation import RocCurves
 from .tx import instantaneous_frequency, modulator
@@ -28,17 +29,20 @@ _NFFT = 16
 
 
 def _specgram(ax: Axes, x: np.ndarray, p: LoRaParams) -> None:
-    """Espectrograma de `x` con el eje x en muestras, como los demás gráficos."""
+    """Espectrograma de `x` con el eje x en muestras, como los demás gráficos.
 
-    # xextent: cada ventana se ubica en su centro
+    Se agregan _NFFT/2 ceros a cada lado para que haya una ventana centrada en cada muestra de `x`,
+    también en los bordes."""
+
+    pad = np.zeros(_NFFT // 2)
     ax.specgram(
-        x,
+        np.concatenate([pad, x, pad]),
         NFFT=_NFFT,
         noverlap=_NFFT - 1,
         Fs=p.B / 1e3,
         sides="twosided",
         scale="linear",
-        xextent=(_NFFT / 2, x.size - _NFFT / 2),
+        xextent=(0, x.size),
     )
 
 
@@ -55,6 +59,15 @@ def _vlines(ax: Axes, xs) -> None:
 
     for x in xs:
         ax.axvline(x, color="w" if ax.images else "k", ls="--", lw=0.8)
+
+
+def _real_part(ax: Axes, x_fine: np.ndarray, x: np.ndarray, L: int, title: str) -> None:
+    """Parte real de una señal: curva evaluada con L puntos por chip, para que se vea la forma de
+    la onda sin aliasing, y puntos en las muestras."""
+
+    ax.plot(np.arange(x_fine.size) / L, np.real(x_fine), lw=0.5)
+    ax.plot(np.real(x), "k.", ms=3)
+    ax.set(title=title, ylabel="Amplitud")
 
 
 def _annotate_frame(ax: Axes, gap: int, p: LoRaParams, n_samples: int) -> None:
@@ -101,12 +114,9 @@ def modulated_signal(
 
     c = modulate(symbols, p)  # Muestras
     c_fine = modulate(symbols, p, L)  # Entre muestras
-    t = np.arange(c_fine.size) / L  # Tiempo en muestras
 
     fig, axs = plt.subplots(2, 1, figsize=(10, 4.5))
-    axs[0].plot(t, np.real(c_fine), lw=0.5)
-    axs[0].plot(np.real(c), "k.", ms=3)
-    axs[0].set(title=f"Parte real de ${name}$ (puntos: muestras)", ylabel="Amplitud")
+    _real_part(axs[0], c_fine, c, L, f"Parte real de ${name}$ (puntos: muestras)")
     _specgram(axs[1], _centered(c), p)
     axs[1].set(
         title=f"Espectrograma de ${name}\\,(-1)^k$ (centrado en la banda)",
@@ -138,12 +148,70 @@ def fft_decision(
     n = len(symbols_tx)
     fig, axs = plt.subplots(n, 1, figsize=(10, 2.5 * n), squeeze=False)
     for i, ax in enumerate(axs[:, 0]):
-        ax.plot(np.abs(D[i]) ** 2, color="green")
+        ax.stem(np.abs(D[i]) ** 2, linefmt="g-", markerfmt="g.", basefmt=" ")
         title = f"Símbolo n={i}: transmitido s={symbols_tx[i]}, decidido ŝ={symbols_rx[i]}"
         if SNR_dB is not None:
             ax.axvline(symbols_tx[i], color="k", ls="--", lw=0.8)
             title += f" (SNR={SNR_dB} dB)"
         ax.set(title=title, xlabel="q (índice de la FFT)", ylabel="$|D|^2$")
+    fig.tight_layout()
+    return fig
+
+
+def dechirp_steps(
+    r: np.ndarray, s: int, p: LoRaParams, SNR_dB: float | None = None, L: int = 32
+) -> Figure:
+    """Demodulación de un símbolo paso a paso: r, su espectrograma, d y periodograma de d.
+
+    r y d se grafican como en `modulated_signal`: la curva evalúa la señal sin ruido entre
+    muestras, con L puntos por chip, y los puntos son las muestras recibidas.
+
+    Args:
+        r (np.ndarray): Un símbolo recibido, de 2^SF muestras.
+        s (int): Símbolo transmitido.
+        p (LoRaParams): Parámetros del sistema.
+        SNR_dB (float | None): SNR del canal. Si se indica, se agrega al título.
+        L (int): Puntos por chip de las curvas.
+
+    Returns:
+        Figure: Figura con los cuatro gráficos.
+    """
+
+    c_fine = modulator(np.array([s]), p, L)
+    periodogram = np.abs(dechirp_fft(r, p)[0]) ** 2
+    s_hat = np.argmax(periodogram)
+
+    fig, axs = plt.subplots(4, 1, figsize=(10, 10))
+    _real_part(axs[0], c_fine, r, L, "Parte real de $r$ (curva: sin ruido, puntos: muestras)")
+    _specgram(axs[1], _centered(r), p)
+    axs[1].set(
+        title="Espectrograma de $r\\,(-1)^k$ (centrado en la banda)", ylabel="Frecuencia (kHz)"
+    )
+    _real_part(
+        axs[2],
+        dechirp(c_fine, p, L)[0],
+        dechirp(r, p)[0],
+        L,
+        "Parte real de $d$ (curva: sin ruido, puntos: muestras)",
+    )
+    for ax in axs[:3]:
+        ax.set(xlabel="Muestras", xlim=(0, p.M))
+    axs[3].stem(periodogram, linefmt="g-", markerfmt="g.", basefmt=" ")
+    axs[3].axvline(s_hat, color="k", ls="--", lw=0.8)
+    axs[3].set(
+        title=f"Periodograma de $d$, $|\\langle r, c|_{{s=q}} \\rangle|^2$ (decidido ŝ={s_hat})",
+        xlabel="q (índice de la FFT)",
+        ylabel="Potencia",
+    )
+    # Eje superior en frecuencia: el bin q corresponde a q B / 2^SF
+    top = axs[3].secondary_xaxis(
+        "top", functions=(lambda q: q * p.B / p.M / 1e3, lambda f: f * 1e3 * p.M / p.B)
+    )
+    top.set_xlabel("Frecuencia (kHz)")
+    title = f"Símbolo transmitido s={s}"
+    if SNR_dB is not None:
+        title += f", SNR={SNR_dB} dB"
+    fig.suptitle(title)
     fig.tight_layout()
     return fig
 
@@ -226,7 +294,7 @@ def upchirp_correlation(
         SNR_dB (float): SNR de la trama con ruido.
 
     Returns:
-        Figure: Figura con los tres gráficos.
+        Figure: Figura con los cuatro gráficos.
     """
 
     n_samples = y.size + p.M - 1  # Largo de la señal recibida
