@@ -41,6 +41,17 @@ def test_instantaneous_frequency():
     assert f[p.M + 1] == 0  # Se repliega al llegar a B
 
 
+def test_integrated_modulator():
+    symbols = np.array([0, 32, 80])
+    k = np.tile(np.arange(p.M), 3)
+    s = np.repeat(symbols, p.M)
+    # En las muestras: Ec. 2 con k/2 en lugar de k
+    expected = np.exp(2j * np.pi * (s + k / 2) * k / p.M) / np.sqrt(p.M)
+    assert np.allclose(tx.integrated_modulator(symbols, p), expected)
+    assert np.allclose(tx.integrated_modulator(symbols, p, 8)[::8], expected)
+    assert np.allclose(tx.modulator(symbols, p, 8)[::8], tx.modulator(symbols, p))
+
+
 @pytest.mark.parametrize("n_downchirps", [0, 1, 2.25, 2.3])
 @pytest.mark.parametrize("SF", [7, 9])
 def test_preamble_len(SF, n_downchirps):
