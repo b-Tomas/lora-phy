@@ -125,7 +125,7 @@ def deteccion() -> None:
         ("msg", "Transmisor", "Canal", "Preámbulo: 8 up-chirps"),
         ("msg", "Canal", "Detector", "Up-chirps + ruido"),
         ("nota", "Detector",
-         "$T[k]$ tiene picos cada $2^{SF}/2$:\n"
+         "$T[k]$ tiene impulsos cada $2^{SF}/2$:\n"
          "en general, el primer cruce $T[k] \\geq \\eta$\nllega antes del inicio"),
         ("self", "Detector",
          "Máximo de $T$ en los 8 símbolos siguientes,\n"
@@ -142,7 +142,7 @@ def deteccion() -> None:
     alto = {"nota": 1.35, "msg": 0.8, "self": 1.3, "alt": 2.7}
     total = sum(alto[p[0]] for p in pasos) + 0.6
     fig, ax = plt.subplots(figsize=(11, total * 0.62))
-    ax.set_xlim(-1.6, x["Demodulador"] + 1.8)
+    ax.set_xlim(-1.6, x["Demodulador"] + 2.0)
     ax.set_ylim(-total - 0.9, 1.6)
     ax.axis("off")
     ax.text((x["Transmisor"] + x["Demodulador"]) / 2, 1.35,
@@ -177,7 +177,7 @@ def deteccion() -> None:
             ax.text(x[a], yc, texto, ha="center", va="center", fontsize=10.5,
                     bbox=dict(boxstyle="square,pad=0.4", fc="0.93", ec="0.4", lw=0.8))
         elif p[0] == "alt":
-            x0, x1 = x["Detector"] - 1.6, x["Demodulador"] + 1.6
+            x0, x1 = x["Detector"] - 1.85, x["Demodulador"] + 1.85
             top, mid, bot = y - 0.1, y - dy / 2, y - dy + 0.1
             # Fondo blanco para tapar las líneas de vida dentro del recuadro
             ax.add_patch(plt.Rectangle((x0, bot), x1 - x0, top - bot, fc="white", ec="black",
@@ -189,7 +189,7 @@ def deteccion() -> None:
             ax.text((x0 + x1) / 2, (top + mid) / 2 - 0.22, "Trama detectada",
                     ha="center", va="center", fontsize=11)
             ax.text((x0 + x1) / 2, mid - 0.12,
-                    "[sin cruce del umbral, o $\\hat{k}$ corrido por un pico lateral]",
+                    "[sin cruce del umbral, o $\\hat{k}$ corrido por un impulso lateral]",
                     ha="center", va="top", fontsize=10.5)
             ax.text((x0 + x1) / 2, (mid + bot) / 2 - 0.22, "Trama perdida (cuenta para el FER)",
                     ha="center", va="center", fontsize=11)
