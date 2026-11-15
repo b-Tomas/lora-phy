@@ -17,7 +17,6 @@ from typing import NamedTuple
 import numpy as np
 
 from . import params
-from .channel import noise_from_SNR
 from .detection import detect_full
 from .metrics import power
 from .params import LoRaParams
@@ -148,7 +147,9 @@ def frames(symbols: np.ndarray, gaps: np.ndarray, p: LoRaParams) -> np.ndarray:
     )
 
 
-def record(sdr, x: np.ndarray, n_samples: int, calibrate: bool = True) -> tuple[np.ndarray, float]:
+def record(
+    sdr, x: np.ndarray, n_samples: int, calibrate: bool = True, scale_dB: float = 0.0
+) -> tuple[np.ndarray, float]:
     """Transmite `x` en forma cíclica y captura `n_samples` muestras de la señal nueva.
 
     Si `calibrate`, deja actuar al control automático de ganancia (AGC) y después fija la ganancia
@@ -161,7 +162,7 @@ def record(sdr, x: np.ndarray, n_samples: int, calibrate: bool = True) -> tuple[
     sdr.tx_destroy_buffer()
     sdr.rx_destroy_buffer()
     sdr.rx_buffer_size = SETTLE_SIZE
-    sdr.tx(x / adc_peak(x) * TX_SCALE)
+    sdr.tx(x / adc_peak(x) * TX_SCALE * 10 ** (scale_dB / 20))
     if calibrate:
         sdr.gain_control_mode_chan0 = "slow_attack"
         for _ in range(AGC_SETTLE):
@@ -182,8 +183,8 @@ def measure(
     n_frames: int,
     num_symbols: int,
     gap_range: tuple[int, int],
-    SNR_dB: float = np.inf,
     calibrate: bool = True,
+    scale_dB: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Transmite un buffer de `n_frames` tramas con payloads y silencios al azar, y lo captura.
 
@@ -198,9 +199,9 @@ def measure(
         n_frames (int): Tramas del buffer.
         num_symbols (int): Símbolos del payload por trama.
         gap_range (tuple[int, int]): Largo mínimo y máximo del silencio antes de cada trama, en símbolos.
-        SNR_dB (float): SNR del ruido que se suma en el TX, como en `channel.transmit_frame`
-            (respecto de la potencia de la trama, también sobre el silencio). Infinito: sin ruido.
         calibrate (bool): Calibrar la ganancia del RX con el AGC (`record`).
+        scale_dB (float): Escala digital de las muestras del TX respecto del pico TX_SCALE, en dB.
+            Baja la señal sin bajar el ruido del RX.
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, float]: Símbolos transmitidos
@@ -213,11 +214,10 @@ def measure(
     # Con un buffer de largo impar el TX del Pluto agrega una muestra en cada repetición
     gaps[0] += gaps.sum() % 2  # El preámbulo y el payload tienen largo par
     x = frames(symbols, gaps, p)
-    tx = x + noise_from_SNR(np.resize(preamble(p), x.size), SNR_dB)
     # Largo de la captura: el de n_frames + 3 períodos con el silencio máximo. Es mayor o igual que
     # el buffer más tres períodos, y no depende de los silencios: las capturas se pueden apilar
     longest = gap_range[1] * p.M + p.preamble_len + num_symbols * p.M
-    r, gain = record(sdr, tx, (n_frames + 3) * longest, calibrate)
+    r, gain = record(sdr, x, (n_frames + 3) * longest, calibrate, scale_dB)
     return symbols, gaps, r, gain
 
 
@@ -391,7 +391,4 @@ def acquire(
     elif not Path(path).exists():
         print(f"Sin {path}: Pluto simulado (canal plano, sin ruido ni distorsión del equipo)")
         return run(SimulatedPluto())
-    captures, meta = load(path)
-    if "source" in meta:
-        print(meta["source"])
-    return captures, meta
+    return load(path)

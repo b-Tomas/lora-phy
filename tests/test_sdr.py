@@ -7,19 +7,17 @@ p = LoRaParams(SF=8, B=1e6)
 NUM_SYMBOLS, GAP = 10, (5, 10)
 
 
-@pytest.mark.parametrize(("SNR_dB", "all_errors"), [(np.inf, False), (-30.0, True)])
-def test_measure_and_evaluate(SNR_dB, all_errors):
-    symbols, gaps, r, _ = sdr.measure(sdr.SimulatedPluto(), p, 4, NUM_SYMBOLS, GAP, SNR_dB)
+@pytest.mark.parametrize(("scale_dB", "all_errors"), [(0.0, False), (-80.0, True)])
+@pytest.mark.filterwarnings("ignore:divide by zero")  # Captura en cero: SNR de -inf
+def test_measure_and_evaluate(scale_dB, all_errors):
+    # Con ganancia fija y -80 dB de escala, la señal no llega a un nivel del ADC
+    symbols, gaps, r, _ = sdr.measure(
+        sdr.SimulatedPluto(), p, 4, NUM_SYMBOLS, GAP, calibrate=False, scale_dB=scale_dB
+    )
     errors, timing, _, _ = sdr.evaluate(r, symbols, gaps, p, 1e-3)
     assert errors.size == 4
     assert sdr.frames(symbols, gaps, p).size % 2 == 0  # El Pluto repite mal los buffers impares
     assert errors.all() if all_errors else not errors.any() and not timing.any()
-
-
-def test_noise_added_in_tx():
-    # Con ruido en el TX y un canal sin ruido, el SNR medido es el agregado
-    symbols, gaps, r, _ = sdr.measure(sdr.SimulatedPluto(), p, 3, NUM_SYMBOLS, GAP, -6.0)
-    assert sdr.evaluate(r, symbols, gaps, p, 1e-3).snr == pytest.approx(-6.0, abs=0.3)
 
 
 def test_receive_finds_every_frame():

@@ -66,7 +66,6 @@ def test_sdr_plots_return_figures():
     snrs, fer = np.array([-12.0, -10.0]), np.array([0.5, 0.0])
 
     figures = [
-        plots.sdr_capture(r, gap * p.M, p),
         plots.snr_vs_atten(np.array([-10.0, -30.0]), snrs, snrs),
         plots.fer_sdr(snrs, fer, snrs, fer, 50),
         plots.sdr_tone(np.array([r, 2 * r]), np.array([30.0, 50.0]), 3, p),
