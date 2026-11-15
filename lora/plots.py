@@ -525,29 +525,6 @@ def false_alarms(
     return fig
 
 
-def fer_vs_sf(SFs: np.ndarray, fer: dict[str, np.ndarray], title: str) -> Figure:
-    """FER en escala logarítmica vs SF, una curva por canal. Los puntos en 0 no se dibujan.
-
-    Args:
-        SFs (np.ndarray): Spreading factors simulados.
-        fer (dict[str, np.ndarray]): FER para cada SF, por nombre del canal.
-        title (str): Título del gráfico.
-
-    Returns:
-        Figure: Figura con las curvas.
-    """
-
-    fig, ax = plt.subplots()
-    for name, f in fer.items():
-        ax.plot(SFs, f, marker="o", label=name)
-    ax.set_yscale("log", nonpositive="mask")
-    ax.set_xticks(SFs)
-    ax.set(title=title, xlabel="SF", ylabel="FER")
-    ax.grid(True, which="both", alpha=0.5)
-    ax.legend()
-    return fig
-
-
 def sdr_tone(captures: np.ndarray, gains_dB: np.ndarray, k: int, p: LoRaParams) -> Figure:
     """Capturas de un tono en el bin `k` de la FFT con distintas ganancias del RX, una por fila:
     espectro y plano I/Q contra el fondo de escala del ADC.
@@ -686,14 +663,15 @@ def fer_sdr(
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(SNRs_sim_dB, fer_sim, label="Simulación (canal plano)")
     ax.plot(snr[fer > 0], fer[fer > 0], "o", color="C1", label="SDR")
-    ax.plot(
-        snr[fer == 0],
-        np.full(np.sum(fer == 0), 1 / n_frames),
-        "v",
-        color="C1",
-        mfc="none",
-        label=f"SDR, sin errores en {n_frames} tramas",
-    )
+    if np.any(fer == 0):
+        ax.plot(
+            snr[fer == 0],
+            np.full(np.sum(fer == 0), 1 / n_frames),
+            "v",
+            color="C1",
+            mfc="none",
+            label=f"SDR, sin errores en {n_frames} tramas",
+        )
     ax.set_yscale("log", nonpositive="mask")
     snrs = np.r_[SNRs_sim_dB, snr]
     ax.set_xlim(snrs.min() - 0.5, snrs.max() + 0.5)

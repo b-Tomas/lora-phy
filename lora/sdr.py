@@ -21,7 +21,6 @@ from .channel import noise_from_SNR
 from .detection import detect_full
 from .metrics import power
 from .params import LoRaParams
-from .rx import demodulator
 from .tx import modulator, preamble
 
 LO_FREQ = 905e6  # Portadora
@@ -240,12 +239,11 @@ def stack(runs: list, **meta) -> tuple[np.ndarray, dict]:
 
 def receive(
     r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float, num_symbols: int
-) -> tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """Receptor: busca las tramas en una captura sin saber dónde están.
 
     Recorre la captura con una ventana de dos tramas de largo y busca un preámbulo en ella con
-    `detect_full`. Si lo encuentra, demodula el payload y la ventana siguiente empieza donde
-    termina la trama. Si no, la ventana avanza una trama: una trama que empieza en la primera
+    `detect_full`. Si lo encuentra, la ventana siguiente empieza donde termina la trama. Si no, la ventana avanza una trama: una trama que empieza en la primera
     mitad de la ventana entra entera en ella, y la que empieza en la segunda mitad, en la ventana
     siguiente.
 
@@ -261,27 +259,23 @@ def receive(
         num_symbols (int): Símbolos del payload por trama.
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: Muestra de inicio de cada trama detectada y su payload
-        demodulado (n_detectadas, num_symbols).
+        np.ndarray: Muestra de inicio de cada trama detectada.
     """
 
     frame_len = p.preamble_len + num_symbols * p.M
     energy = np.convolve(np.abs(r[: 2 * frame_len]) ** 2, np.ones(p.M), "valid")
     pos = int(np.argmin(energy))
-    starts, payloads = [], []
+    starts = []
     while r.size - pos >= frame_len:
         start = detect_full(r[pos : pos + 2 * frame_len], p, noise_power, P_FA)
         if start is None:
             pos += frame_len
             continue
-        begin = pos + start + p.preamble_len
-        payload = r[begin : begin + num_symbols * p.M]
-        if payload.size < num_symbols * p.M:
+        pos += start + frame_len
+        if pos > r.size:
             break  # Trama cortada al final de la captura
-        starts.append(pos + start)
-        payloads.append(demodulator(payload, p))
-        pos = begin + payload.size
-    return np.array(starts, dtype=int), np.array(payloads, dtype=int).reshape(-1, num_symbols)
+        starts.append(pos - frame_len)
+    return np.array(starts, dtype=int)
 
 
 def snr_dB(r: np.ndarray, x: np.ndarray) -> float:
@@ -301,7 +295,7 @@ def snr_dB(r: np.ndarray, x: np.ndarray) -> float:
 class Evaluation(NamedTuple):
     """Resultado de `evaluate` para una captura."""
 
-    errors: np.ndarray  # Error de cada trama transmitida (bool)
+    errors: np.ndarray  # Trama transmitida perdida: inicio no detectado en la muestra exacta
     timing: np.ndarray  # Inicio detectado menos inicio real, en muestras, de las detectadas
     snr: float  # SNR medido, en dB
     starts: np.ndarray  # Inicios detectados por el receptor, en muestras de la captura
@@ -346,7 +340,7 @@ def evaluate(
     real = 2 * longest + (in_buffer + delay - 2 * longest) % L
 
     noise = power(np.concatenate([r[t - g : t] for t, g in zip(real, gaps)]))
-    starts, payloads = receive(r, p, max(noise, ADC_NOISE_FLOOR), P_FA, num_symbols)
+    starts = receive(r, p, max(noise, ADC_NOISE_FLOOR), P_FA, num_symbols)
     snr = snr_dB(np.roll(r[:L], -delay), x)
     if starts.size == 0:
         return Evaluation(np.ones(len(symbols), dtype=bool), starts, snr, starts)
@@ -355,8 +349,7 @@ def evaluate(
     nearest = np.abs(starts[:, None] - real).argmin(axis=0)
     timing = starts[nearest] - real
     found = np.abs(timing) < frame_len // 2
-    errors = ~(found & (payloads[nearest] == symbols).all(axis=1))
-    return Evaluation(errors, timing[found], snr, starts)
+    return Evaluation(timing != 0, timing[found], snr, starts)
 
 
 def save(path: str | Path, captures: np.ndarray, **meta) -> None:

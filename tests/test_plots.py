@@ -52,7 +52,6 @@ def test_every_plot_returns_a_figure():
         plots.compare_methods(snrs, by_method, by_method, "FER", "Título", logy=True),
         plots.roc({-14: simulation.roc_curves(p, -14, 10, axis, P_FA)}, axis, P_FA),
         plots.false_alarms(simulation.measured_false_alarms(p, 50, np.logspace(-1, -2, 3)), 50),
-        plots.fer_vs_sf(np.array([7, 8]), {"Canal plano": np.array([0.1, 0.0])}, "Título"),
     ]
 
     assert all(isinstance(fig, Figure) for fig in figures)

@@ -16,7 +16,7 @@ from .detection import (
     time_threshold,
     zero_count_false_alarm,
 )
-from .metrics import BER, frame_error, roc
+from .metrics import BER, roc
 from .params import LoRaParams
 from .rx import decoder, demodulator
 from .tx import encoder, modulator, preamble
@@ -78,7 +78,7 @@ def ber_vs_snr(
 # --- Tramas ----------------------------------------------------------------------------------
 
 
-def frame_rates(
+def fer_vs_snr(
     detect: Detector,
     SNRs_dB: np.ndarray,
     h: np.ndarray,
@@ -88,8 +88,11 @@ def frame_rates(
     num_symbols: int,
     gap: int,
     min_errors: int | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Simula tramas con un detector y estima el inicio correcto y el FER para cada SNR.
+) -> np.ndarray:
+    """Simula tramas con un detector y estima el FER para cada SNR.
+
+    Una trama se pierde si el detector no estima su inicio en la muestra exacta: no la detecta,
+    o la detecta antes (falsa alarma) o después. Lo que pase con el payload lo mide el BER.
 
     Args:
         detect (Detector): Detector. detect(r, p, noise_power, P_FA) devuelve la muestra de
@@ -102,29 +105,25 @@ def frame_rates(
         num_symbols (int): Símbolos del payload por trama.
         gap (int): Símbolos de silencio antes de la trama.
         min_errors (int | None): Si se indica, cada SNR termina al juntar esa cantidad de tramas
-            con error. Donde el FER es alto alcanzan pocas tramas, y las demás se gastan donde
+            perdidas. Donde el FER es alto alcanzan pocas tramas, y las demás se gastan donde
             es bajo.
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: Fracción de tramas con inicio correcto y FER, para cada SNR.
+        np.ndarray: FER para cada SNR.
     """
 
-    p_start, fer = np.zeros(len(SNRs_dB)), np.zeros(len(SNRs_dB))
+    fer = np.zeros(len(SNRs_dB))
     for i, SNR_dB in enumerate(SNRs_dB):
         # Potencia del ruido por muestra (sigma^2), que el receptor conoce
         npw = noise_power(p, SNR_dB)
-        frames = 0
-        while frames < simulations and (min_errors is None or fer[i] < min_errors):
-            symbols_tx = params.rng.integers(0, p.M, size=num_symbols)
-            r = transmit_frame(symbols_tx, gap, p, SNR_dB, h)
-            start = detect(r, p, npw, P_FA)
-            p_start[i] += start == gap * p.M
-            fer[i] += frame_error(r, start, symbols_tx, p)
+        frames = errors = 0
+        while frames < simulations and (min_errors is None or errors < min_errors):
+            r = transmit_frame(params.rng.integers(0, p.M, size=num_symbols), gap, p, SNR_dB, h)
+            errors += detect(r, p, npw, P_FA) != gap * p.M
             frames += 1
-        p_start[i] /= frames
-        fer[i] /= frames
+        fer[i] = errors / frames
 
-    return p_start, fer
+    return fer
 
 
 # --- ROC y falsas alarmas --------------------------------------------------------------------

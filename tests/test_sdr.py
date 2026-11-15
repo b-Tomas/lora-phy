@@ -28,10 +28,9 @@ def test_receive_finds_every_frame():
     gaps = rng.integers(GAP[0] * p.M, GAP[1] * p.M, size=3)
     x = sdr.frames(symbols, gaps, p)
     r = np.roll(np.tile(x, 2), 1234) * sdr.TX_SCALE
-    starts, payloads = sdr.receive(r, p, sdr.ADC_NOISE_FLOOR, 1e-3, NUM_SYMBOLS)
+    starts = sdr.receive(r, p, sdr.ADC_NOISE_FLOOR, 1e-3, NUM_SYMBOLS)
     in_buffer = np.cumsum(gaps) + np.arange(3) * (p.preamble_len + NUM_SYMBOLS * p.M)
-    assert set((starts - 1234) % x.size) <= set(in_buffer)
-    assert starts.size >= 4 and {tuple(s) for s in payloads} == {tuple(s) for s in symbols}
+    assert starts.size >= 4 and set((starts - 1234) % x.size) == set(in_buffer)
 
 
 @pytest.mark.parametrize("SNR_dB", [-10.0, 0.0])
