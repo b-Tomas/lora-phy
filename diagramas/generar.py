@@ -1,4 +1,4 @@
-"""Genera los diagramas orientativos del TP en SVG y PNG, en esta misma carpeta.
+"""Genera los diagramas orientativos del TP en SVG, en esta misma carpeta.
 
 Requiere schemdraw y matplotlib:
 
@@ -23,13 +23,11 @@ BOX_H = 1.3
 
 
 def save_drawing(d: schemdraw.Drawing, name: str) -> None:
-    for ext in ("svg", "png"):
-        d.save(str(OUT / f"{name}.{ext}"), transparent=False, dpi=200)
+    d.save(str(OUT / f"{name}.svg"), transparent=False)
 
 
 def save_figure(fig, name: str) -> None:
-    for ext in ("svg", "png"):
-        fig.savefig(OUT / f"{name}.{ext}", dpi=200, bbox_inches="tight", facecolor="white")
+    fig.savefig(OUT / f"{name}.svg", bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
