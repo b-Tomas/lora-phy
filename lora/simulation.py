@@ -1,5 +1,6 @@
 """Simulaciones Monte Carlo del sistema. Devuelven datos; los gráficos están en `plots`."""
 
+from concurrent.futures import ProcessPoolExecutor
 from typing import NamedTuple
 
 import numpy as np
@@ -78,6 +79,57 @@ def ber_vs_snr(
 # --- Tramas ----------------------------------------------------------------------------------
 
 
+def fer_at_snr(
+    detect: Detector,
+    SNR_dB: float,
+    h: np.ndarray,
+    p: LoRaParams,
+    P_FA: float,
+    simulations: int,
+    num_symbols: int,
+    gap: int,
+    min_errors: int | None = None,
+) -> float:
+    """Simula tramas con un detector y estima el FER para un SNR.
+
+    Una trama se pierde si el detector no estima su inicio en la muestra exacta: no la detecta,
+    o la detecta antes (falsa alarma) o después. Lo que pase con el payload lo mide el BER.
+
+    Args:
+        detect (Detector): Detector. detect(r, p, noise_power, P_FA) devuelve la muestra de
+            inicio de la trama, o None si no la detecta.
+        SNR_dB (float): SNR a simular, en decibelios.
+        h (np.ndarray): Respuesta al impulso del canal.
+        p (LoRaParams): Parámetros del sistema.
+        P_FA (float): Probabilidad de falsa alarma por símbolo.
+        simulations (int): Tramas simuladas. Con `min_errors`, el máximo.
+        num_symbols (int): Símbolos del payload por trama.
+        gap (int): Símbolos de silencio antes de la trama.
+        min_errors (int | None): Si se indica, termina al juntar esa cantidad de tramas
+            perdidas. Donde el FER es alto alcanzan pocas tramas, y las demás se gastan donde
+            es bajo.
+
+    Returns:
+        float: FER.
+    """
+
+    # Potencia del ruido por muestra (sigma^2), que el receptor conoce
+    npw = noise_power(p, SNR_dB)
+    frames = errors = 0
+    while frames < simulations and (min_errors is None or errors < min_errors):
+        r = transmit_frame(params.rng.integers(0, p.M, size=num_symbols), gap, p, SNR_dB, h)
+        errors += detect(r, p, npw, P_FA) != gap * p.M
+        frames += 1
+
+    return errors / frames
+
+
+def _seeded_fer_at_snr(seed: int, *args) -> float:
+    """`fer_at_snr` con el generador reiniciado: corre en otro proceso, con su propia copia."""
+    params.seed(seed)
+    return fer_at_snr(*args)
+
+
 def fer_vs_snr(
     detect: Detector,
     SNRs_dB: np.ndarray,
@@ -89,41 +141,38 @@ def fer_vs_snr(
     gap: int,
     min_errors: int | None = None,
 ) -> np.ndarray:
-    """Simula tramas con un detector y estima el FER para cada SNR.
+    """FER para cada SNR, con `fer_at_snr`. Los SNR se simulan en paralelo, uno por proceso.
 
-    Una trama se pierde si el detector no estima su inicio en la muestra exacta: no la detecta,
-    o la detecta antes (falsa alarma) o después. Lo que pase con el payload lo mide el BER.
+    Cada SNR usa una semilla sacada del generador del paquete: la corrida sigue siendo
+    reproducible con `seed`, y no depende de cuántos procesos haya.
 
     Args:
-        detect (Detector): Detector. detect(r, p, noise_power, P_FA) devuelve la muestra de
-            inicio de la trama, o None si no la detecta.
         SNRs_dB (np.ndarray): SNR a simular, en decibelios.
-        h (np.ndarray): Respuesta al impulso del canal.
-        p (LoRaParams): Parámetros del sistema.
-        P_FA (float): Probabilidad de falsa alarma por símbolo.
-        simulations (int): Tramas simuladas por SNR. Con `min_errors`, el máximo.
-        num_symbols (int): Símbolos del payload por trama.
-        gap (int): Símbolos de silencio antes de la trama.
-        min_errors (int | None): Si se indica, cada SNR termina al juntar esa cantidad de tramas
-            perdidas. Donde el FER es alto alcanzan pocas tramas, y las demás se gastan donde
-            es bajo.
+        Los demás, como en `fer_at_snr`.
 
     Returns:
         np.ndarray: FER para cada SNR.
     """
 
-    fer = np.zeros(len(SNRs_dB))
-    for i, SNR_dB in enumerate(SNRs_dB):
-        # Potencia del ruido por muestra (sigma^2), que el receptor conoce
-        npw = noise_power(p, SNR_dB)
-        frames = errors = 0
-        while frames < simulations and (min_errors is None or errors < min_errors):
-            r = transmit_frame(params.rng.integers(0, p.M, size=num_symbols), gap, p, SNR_dB, h)
-            errors += detect(r, p, npw, P_FA) != gap * p.M
-            frames += 1
-        fer[i] = errors / frames
-
-    return fer
+    seeds = params.rng.integers(2**63, size=len(SNRs_dB))
+    with ProcessPoolExecutor() as pool:
+        futures = [
+            pool.submit(
+                _seeded_fer_at_snr,
+                int(s),
+                detect,
+                SNR_dB,
+                h,
+                p,
+                P_FA,
+                simulations,
+                num_symbols,
+                gap,
+                min_errors,
+            )
+            for s, SNR_dB in zip(seeds, SNRs_dB)
+        ]
+        return np.array([f.result() for f in futures])
 
 
 # --- ROC y falsas alarmas --------------------------------------------------------------------

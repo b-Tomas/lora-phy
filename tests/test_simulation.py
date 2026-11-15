@@ -1,6 +1,6 @@
 import numpy as np
 
-from lora import channel, detection, simulation
+from lora import channel, detection, seed, simulation
 
 
 def test_fer_noiseless(p):
@@ -16,9 +16,9 @@ def test_fer_min_errors(p, monkeypatch):
     frames = []
     transmit = simulation.transmit_frame
     monkeypatch.setattr(simulation, "transmit_frame", lambda *a: frames.append(1) or transmit(*a))
-    fer = simulation.fer_vs_snr(
+    fer = simulation.fer_at_snr(
         detection.detect_full,
-        np.array([-60.0]),
+        -60.0,
         channel.FLAT,
         p,
         1e-3,
@@ -27,7 +27,16 @@ def test_fer_min_errors(p, monkeypatch):
         gap=3,
         min_errors=5,
     )
-    assert len(frames) == 5 and fer[0] == 1
+    assert len(frames) == 5 and fer == 1
+
+
+def test_fer_vs_snr_reproducible(p):
+    # Con la misma semilla, la corrida en paralelo da el mismo FER
+    args = (detection.detect_full, np.array([-14.0, -12.0]), channel.FLAT, p, 1e-3, 20)
+    seed(0)
+    fer = simulation.fer_vs_snr(*args, num_symbols=4, gap=3)
+    seed(0)
+    assert np.array_equal(fer, simulation.fer_vs_snr(*args, num_symbols=4, gap=3))
 
 
 def test_ber_vs_snr_noiseless(p):

@@ -96,13 +96,20 @@ def preamble_correlation(r: np.ndarray, p: LoRaParams) -> np.ndarray:
         np.ndarray: Estadístico T[k] para cada muestra k donde entra el preámbulo completo.
     """
 
-    # Más corta que la plantilla, np.correlate intercambiaría los argumentos
+    # Más corta que la plantilla, no hay ninguna posición donde entre el preámbulo completo
     assert r.size >= p.n_upchirps * p.M, "La señal es más corta que los up-chirps del preámbulo"
 
     template = modulator(np.zeros(p.n_upchirps, dtype=int), p)
 
+    # Correlación por FFT: mismo resultado que np.correlate(r, template, mode="valid"), pero mucho
+    # más rápida con una plantilla de n_upchirps * M muestras. Con n >= r.size la correlación
+    # circular no se solapa en las posiciones válidas; potencia de 2 para que la FFT sea rápida
+    n = 1 << (r.size - 1).bit_length()
+    y = np.fft.ifft(np.fft.fft(r, n) * np.conj(np.fft.fft(template, n)))
+    y = y[: r.size - template.size + 1]
+
     # Equivale a sumar los picos y[k + n M] de upchirp_correlation antes del módulo (coherente)
-    return np.abs(np.correlate(r, template, mode="valid")) ** 2
+    return np.abs(y) ** 2
 
 
 def time_threshold(noise_power: float, P_FA: float, p: LoRaParams) -> float:

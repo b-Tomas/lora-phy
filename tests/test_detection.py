@@ -14,6 +14,14 @@ def test_full(p, clean_frame):
     assert detection.detect_full(r, p, npw, 1e-3) == gap * p.M
 
 
+def test_full_matches_direct_correlation(p):
+    # La correlación por FFT da lo mismo que la directa
+    r = rng.normal(size=3000) + 1j * rng.normal(size=3000)
+    template = detection.modulator(np.zeros(8, dtype=int), p)
+    expected = np.abs(np.correlate(r, template, mode="valid")) ** 2
+    assert np.allclose(detection.preamble_correlation(r, p), expected)
+
+
 def test_peaks_threshold(p):
     # Con un solo pico, S[k] es exponencial y el umbral coincide con el de T[k]
     q1 = dataclasses.replace(p, n_upchirps=1)
