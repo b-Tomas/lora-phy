@@ -125,14 +125,14 @@ def deteccion() -> None:
         ("msg", "Transmisor", "Canal", "Preámbulo: 8 up-chirps"),
         ("msg", "Canal", "Detector", "Up-chirps + ruido"),
         ("nota", "Detector",
-         "$T[k]$ es un peine con picos cada $2^{SF}/2$:\n"
-         "el primer cruce $T[k] \\geq \\eta$ suele llegar\nantes del inicio"),
+         "$T[k]$ tiene picos cada $2^{SF}/2$:\n"
+         "en general, el primer cruce $T[k] \\geq \\eta$\nllega antes del inicio"),
         ("self", "Detector",
          "Máximo de $T$ en los 8 símbolos siguientes,\n"
          "repetido hasta que no aumente $\\rightarrow$ inicio $\\hat{k}$"),
         ("msg", "Transmisor", "Canal", "2.25 down-chirps"),
         ("msg", "Canal", "Detector", "Down-chirps + ruido"),
-        ("nota", "Detector", "No los usa: la plantilla\nsolo tiene up-chirps"),
+        ("nota", "Detector", "No los usa"),
         ("msg", "Transmisor", "Canal", "Payload (10 símbolos)"),
         ("msg", "Canal", "Demodulador", "Payload + ruido"),
         ("msg", "Detector", "Demodulador", "$\\hat{k}$: el payload empieza en $\\hat{k} + 10.25 \\cdot 2^{SF}$"),
