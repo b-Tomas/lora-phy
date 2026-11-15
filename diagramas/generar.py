@@ -72,7 +72,7 @@ def canal() -> None:
         d.config(fontsize=FONT, bgcolor="white")
 
         a = dsp.Arrow().right().length(3.0).label("$c(nT_s + kT)$", "top")
-        h = dsp.Box(w=2.6, h=BOX_H).at(a.end).anchor("W").label("$h[k]$\n(SLIT)")
+        h = dsp.Box(w=2.6, h=BOX_H).at(a.end).anchor("W").label("$h[n]$\n(SLIT)")
         a = dsp.Arrow().at(h.E).right().length(2.2).label("$(c * h)$", "top")
         s = dsp.Sum().at(a.end).anchor("W")
         z = dsp.Arrow().endpoints((s.S[0], s.S[1] - 1.8), s.S)
@@ -85,9 +85,9 @@ def canal() -> None:
 
     # Respuesta al impulso de cada canal, un SVG por canal
     casos = [
-        ("canal_h_plano", "Plano\n$h[k] = \\delta[k]$", [1.0, 0.0]),
+        ("canal_h_plano", "Plano\n$h[n] = \\delta[n]$", [1.0, 0.0]),
         ("canal_h_selectivo",
-         "Selectivo en frecuencia\n$h[k] = \\sqrt{0.8}\\,\\delta[k] + \\sqrt{0.2}\\,\\delta[k-1]$",
+         "Selectivo en frecuencia\n$h[n] = \\sqrt{0.8}\\,\\delta[n] + \\sqrt{0.2}\\,\\delta[n-1]$",
          [0.8**0.5, 0.2**0.5]),
     ]
     for nombre, titulo, h in casos:
@@ -96,8 +96,8 @@ def canal() -> None:
         ax.stem(k, h, linefmt="k-", markerfmt="ko", basefmt="k-")
         ax.set_title(titulo, fontsize=11)
         ax.set_xticks(list(k))
-        ax.set_xlabel("$k$")
-        ax.set_ylabel("$h[k]$")
+        ax.set_xlabel("$n$")
+        ax.set_ylabel("$h[n]$")
         ax.set_xlim(-0.6, 1.6)
         ax.set_ylim(0, 1.15)
         for side in ("top", "right"):
