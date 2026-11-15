@@ -83,26 +83,27 @@ def canal() -> None:
 
     save_drawing(d, "canal")
 
-    # Respuestas al impulso de los dos canales
-    fig, axes = plt.subplots(1, 2, figsize=(7, 2.4), sharey=True)
+    # Respuesta al impulso de cada canal, un SVG por canal
     casos = [
-        ("Plano\n$h[k] = \\delta[k]$", [1.0, 0.0]),
-        ("Selectivo en frecuencia\n$h[k] = \\sqrt{0.8}\\,\\delta[k] + \\sqrt{0.2}\\,\\delta[k-1]$",
+        ("canal_h_plano", "Plano\n$h[k] = \\delta[k]$", [1.0, 0.0]),
+        ("canal_h_selectivo",
+         "Selectivo en frecuencia\n$h[k] = \\sqrt{0.8}\\,\\delta[k] + \\sqrt{0.2}\\,\\delta[k-1]$",
          [0.8**0.5, 0.2**0.5]),
     ]
-    for ax, (titulo, h) in zip(axes, casos):
+    for nombre, titulo, h in casos:
+        fig, ax = plt.subplots(figsize=(3.8, 2.6))
         k = range(len(h))
         ax.stem(k, h, linefmt="k-", markerfmt="ko", basefmt="k-")
         ax.set_title(titulo, fontsize=11)
         ax.set_xticks(list(k))
         ax.set_xlabel("$k$")
+        ax.set_ylabel("$h[k]$")
         ax.set_xlim(-0.6, 1.6)
         ax.set_ylim(0, 1.15)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
-    axes[0].set_ylabel("$h[k]$")
-    fig.tight_layout()
-    save_figure(fig, "canal_h")
+        fig.tight_layout()
+        save_figure(fig, nombre)
 
 
 # --- 3. Detección de trama (diagrama de secuencia) ------------------------------------------
