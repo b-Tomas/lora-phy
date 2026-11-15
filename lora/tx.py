@@ -36,7 +36,7 @@ def encoder(bits: np.ndarray, p: LoRaParams) -> np.ndarray:
     return W @ 2**h
 
 
-def instantaneous_frequency(symbols: np.ndarray, p: LoRaParams) -> np.ndarray:
+def instantaneous_frequency(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
     """Frecuencia nominal de la señal modulada, según el exponente de Ec. 2.
 
     Para cada símbolo n y chip k: f(k) = ((s(nT_s) + k) mod 2^SF) B / 2^SF. Es la frecuencia que
@@ -47,6 +47,7 @@ def instantaneous_frequency(symbols: np.ndarray, p: LoRaParams) -> np.ndarray:
     Args:
         symbols (np.ndarray): Conjunto de símbolos $s(nT_s)$. 0 <= s < 2**SF.
         p (LoRaParams): Parámetros del sistema.
+        L (int): Puntos por chip. Con L > 1, k también toma valores entre chips.
 
     Returns:
         np.ndarray: Frecuencia instantánea de cada chip, en Hz, como vector unidimensional.
@@ -55,13 +56,13 @@ def instantaneous_frequency(symbols: np.ndarray, p: LoRaParams) -> np.ndarray:
     # Convertir s a un vector de forma (N, 1) para poder sumarle k
     s = symbols.reshape(-1, 1)  # Vector columna de símbolos
 
-    # Vector de chips k = 0..M-1
-    k = np.arange(p.M)  # Vector fila de chips
+    # Vector de chips k = 0..M-1, con L puntos por chip
+    k = np.arange(p.M * L) / L  # Vector fila de chips
 
     return (((s + k) % p.M) * p.B / p.M).ravel()
 
 
-def modulator(symbols: np.ndarray, p: LoRaParams) -> np.ndarray:
+def modulator(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
     """Genera la forma de onda FSCM para una secuencia de símbolos según Ec. 2.
 
     Muestrea a k = 0..2**SF-1 chips por cada símbolo n.
@@ -69,6 +70,7 @@ def modulator(symbols: np.ndarray, p: LoRaParams) -> np.ndarray:
     Args:
         symbols (np.ndarray): Conjunto de símbolos $s(nT_s)$ a transmitir. 0 <= s < 2**SF.
         p (LoRaParams): Parámetros del sistema.
+        L (int): Puntos por chip. Con L > 1 evalúa Ec. 2 también entre muestras, para graficar.
 
     Returns:
         np.ndarray: Señal modulada (compleja) en el dominio del tiempo.
@@ -76,10 +78,10 @@ def modulator(symbols: np.ndarray, p: LoRaParams) -> np.ndarray:
 
     # Frecuencia instantanea de la señal modulada: f(k) = (s + k) mod M * B / M
     # Es el exponente en la Ec. 2, sin el muestreo kT. Forma (N, M)
-    f = instantaneous_frequency(symbols, p).reshape(-1, p.M)
+    f = instantaneous_frequency(symbols, p, L).reshape(-1, p.M * L)
 
-    # Vector de chips k = 0..M-1
-    k = np.arange(p.M)
+    # Vector de chips k = 0..M-1, con L puntos por chip
+    k = np.arange(p.M * L) / L
 
     # c[n, k] = c(nT_s + kT). Vector de forma (N, M) donde N es el número de símbolos y M es el
     # número de chips por símbolo.

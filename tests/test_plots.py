@@ -27,8 +27,8 @@ def test_every_plot_returns_a_figure():
     by_method = {m: np.array([0.5, 0.9]) for m in ("full", "peaks", "freq", "ideal")}
 
     figures = [
-        plots.modulated_signal(c, symbols, p),
-        plots.integrated_chirp(symbols, p),
+        plots.modulated_signal(symbols, p),
+        plots.modulated_signal(symbols, p, tx.integrated_modulator, "\\tilde{c}"),
         plots.fft_decision(rx.dechirp_fft(c, p), symbols, rx.demodulator(c, p)),
         plots.fft_decision(rx.dechirp_fft(c, p), symbols, rx.demodulator(c, p), SNR_dB),
         plots.ber_vs_snr(snrs, {"Canal plano": np.array([0.1, 0.01])}),

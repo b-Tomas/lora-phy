@@ -14,7 +14,7 @@ from .params import LoRaParams
 from .rx import dechirp_fft
 from .sdr import ADC_FULL_SCALE
 from .simulation import RocCurves
-from .tx import instantaneous_frequency, integrated_modulator
+from .tx import instantaneous_frequency, modulator
 
 # Nombre y color de cada método de detección, por clave de método
 _METHODS = {
@@ -81,64 +81,36 @@ def _annotate_frame(ax: Axes, gap: int, p: LoRaParams, n_samples: int) -> None:
 # --- Señal modulada y demodulación -----------------------------------------------------------
 
 
-def modulated_signal(c: np.ndarray, symbols: np.ndarray, p: LoRaParams) -> Figure:
-    """Señal modulada en el tiempo: parte real, imaginaria y espectrograma.
-
-    Args:
-        c (np.ndarray): Señal modulada.
-        symbols (np.ndarray): Símbolos modulados en `c`.
-        p (LoRaParams): Parámetros del sistema.
-
-    Returns:
-        Figure: Figura con los tres gráficos.
-    """
-
-    fig, axs = plt.subplots(3, 1, figsize=(10, 6))
-    axs[0].plot(np.real(c))
-    axs[0].set(title="Señal modulada (parte real)", xlabel="Muestras", ylabel="Amplitud")
-    axs[1].plot(np.imag(c), color="orange")
-    axs[1].set(title="Señal modulada (parte imaginaria)", xlabel="Muestras", ylabel="Amplitud")
-    # Espectrograma: frecuencia en el tiempo estimada a partir de la señal c, centrada en la banda
-    _specgram(axs[2], _centered(c), p)
-    axs[2].set(
-        title="Señal modulada (espectrograma de $c\\,(-1)^k$, centrado en la banda)",
-        xlabel="Muestras",
-        ylabel="Frecuencia (kHz)",
-    )
-    # Separación entre símbolos: un símbolo (Ts) son 2**SF muestras
-    for ax in axs:
-        _vlines(ax, np.arange(len(symbols) + 1) * p.M)
-    fig.tight_layout()
-    return fig
-
-
-def integrated_chirp(symbols: np.ndarray, p: LoRaParams, L: int = 8) -> Figure:
-    """Chirp con fase integrada (`tx.integrated_modulator`): parte real y espectrograma.
+def modulated_signal(
+    symbols: np.ndarray, p: LoRaParams, modulate=modulator, name: str = "c", L: int = 8
+) -> Figure:
+    """Señal modulada en el tiempo: parte real y espectrograma.
 
     La parte real se evalúa también entre muestras, con L puntos por chip, para que se vea la forma
-    de la onda sin aliasing.
+    de la onda sin aliasing. El espectrograma se calcula sobre las muestras, centrado en la banda.
 
     Args:
         symbols (np.ndarray): Símbolos a modular.
         p (LoRaParams): Parámetros del sistema.
-        L (int): Puntos por chip.
+        modulate: `tx.modulator` (Ec. 2) o `tx.integrated_modulator` (fase integrada).
+        name (str): Nombre de la señal en LaTeX, para los títulos.
+        L (int): Puntos por chip de la parte real.
 
     Returns:
         Figure: Figura con los dos gráficos.
     """
 
-    c = integrated_modulator(symbols, p)  # Muestras
-    c_fine = integrated_modulator(symbols, p, L)  # Entre muestras
+    c = modulate(symbols, p)  # Muestras
+    c_fine = modulate(symbols, p, L)  # Entre muestras
     t = np.arange(c_fine.size) / L  # Tiempo en muestras
 
     fig, axs = plt.subplots(2, 1, figsize=(10, 4.5))
     axs[0].plot(t, np.real(c_fine), lw=0.5)
     axs[0].plot(np.real(c), "k.", ms=3)
-    axs[0].set(title="Fase integrada (parte real, puntos: muestras)", ylabel="Amplitud")
-    # Espectrograma de las muestras, centrado en la banda como en `modulated_signal`
+    axs[0].set(title=f"Parte real de ${name}$ (puntos: muestras)", ylabel="Amplitud")
     _specgram(axs[1], _centered(c), p)
     axs[1].set(
-        title="Fase integrada (espectrograma de $\\tilde{c}\\,(-1)^k$, centrado en la banda)",
+        title=f"Espectrograma de ${name}\\,(-1)^k$ (centrado en la banda)",
         ylabel="Frecuencia (kHz)",
     )
     for ax in axs:

@@ -49,6 +49,7 @@ def test_integrated_modulator():
     expected = np.exp(2j * np.pi * (s + k / 2) * k / p.M) / np.sqrt(p.M)
     assert np.allclose(tx.integrated_modulator(symbols, p), expected)
     assert np.allclose(tx.integrated_modulator(symbols, p, 8)[::8], expected)
+    assert np.allclose(tx.modulator(symbols, p, 8)[::8], tx.modulator(symbols, p))
 
 
 @pytest.mark.parametrize("n_downchirps", [0, 1, 2.25, 2.3])
