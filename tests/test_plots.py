@@ -28,7 +28,8 @@ def test_every_plot_returns_a_figure():
 
     figures = [
         plots.modulated_signal(symbols, p),
-        plots.modulated_signal(symbols, p, tx.integrated_modulator, "\\tilde{c}"),
+        plots.modulated_signal(symbols, p, tx.paper_modulator, "c"),
+        plots.demodulation_signals(symbols, p),
         plots.fft_decision(rx.dechirp_fft(c, p), symbols, rx.demodulator(c, p)),
         plots.fft_decision(rx.dechirp_fft(c, p), symbols, rx.demodulator(c, p), SNR_dB),
         plots.ber_vs_snr(snrs, {"Canal plano": np.array([0.1, 0.01])}),

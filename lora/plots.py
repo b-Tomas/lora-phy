@@ -9,8 +9,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.ticker import MultipleLocator
 
 from .params import LoRaParams
+from .rx import downchirp
 from .sdr import ADC_FULL_SCALE
 from .simulation import RocCurves
 from .tx import instantaneous_frequency, modulator
@@ -81,7 +83,7 @@ def _annotate_frame(ax: Axes, gap: int, p: LoRaParams, n_samples: int) -> None:
 
 
 def modulated_signal(
-    symbols: np.ndarray, p: LoRaParams, modulate=modulator, name: str = "c", L: int = 8
+    symbols: np.ndarray, p: LoRaParams, modulate=modulator, name: str = r"\tilde{c}", L: int = 8
 ) -> Figure:
     """Señal modulada en el tiempo: parte real y espectrograma.
 
@@ -91,7 +93,7 @@ def modulated_signal(
     Args:
         symbols (np.ndarray): Símbolos a modular.
         p (LoRaParams): Parámetros del sistema.
-        modulate: `tx.modulator` (Ec. 2) o `tx.integrated_modulator` (fase integrada).
+        modulate: `tx.modulator` (fase integrada) o `tx.paper_modulator` (Ec. 2).
         name (str): Nombre de la señal en LaTeX, para los títulos.
         L (int): Puntos por chip de la parte real.
 
@@ -99,22 +101,113 @@ def modulated_signal(
         Figure: Figura con los dos gráficos.
     """
 
-    c = modulate(symbols, p)  # Muestras
-    c_fine = modulate(symbols, p, L)  # Entre muestras
-    t = np.arange(c_fine.size) / L  # Tiempo en muestras
-
     fig, axs = plt.subplots(2, 1, figsize=(10, 4.5))
-    axs[0].plot(t, np.real(c_fine), lw=0.5)
-    axs[0].plot(np.real(c), "k.", ms=3)
-    axs[0].set(title=f"Parte real de ${name}$ (puntos: muestras)", ylabel="Amplitud")
-    _specgram(axs[1], _centered(c), p)
+    _time_and_spectrogram(axs, modulate(symbols, p), modulate(symbols, p, L), name, p, L)
+    fig.tight_layout()
+    return fig
+
+
+def _time_and_spectrogram(
+    axs: np.ndarray,
+    x: np.ndarray,
+    x_fine: np.ndarray,
+    name: str,
+    p: LoRaParams,
+    L: int,
+    note: str = "puntos: muestras",
+) -> None:
+    """Parte real de `x` (línea entre muestras con `x_fine`, de L puntos por chip, y puntos en las
+    muestras) en `axs[0]`, y espectrograma de las muestras, centrado en la banda, en `axs[1]`."""
+
+    axs[0].plot(np.arange(x_fine.size) / L, np.real(x_fine), lw=0.5)
+    axs[0].plot(np.real(x), "k.", ms=3)
+    axs[0].set(title=f"Parte real de ${name}$ ({note})", ylabel="Amplitud")
+    _specgram(axs[1], _centered(x), p)
     axs[1].set(
         title=f"Espectrograma de ${name}\\,(-1)^k$ (centrado en la banda)",
         ylabel="Frecuencia (kHz)",
     )
     for ax in axs:
         ax.set(xlabel="Muestras")
-        _vlines(ax, np.arange(len(symbols) + 1) * p.M)
+        _vlines(ax, np.arange(x.size // p.M + 1) * p.M)
+
+
+def _interpolate(x: np.ndarray, p: LoRaParams, L: int) -> np.ndarray:
+    """Interpolación de banda limitada de las muestras de cada símbolo, con L puntos por chip: la
+    única señal con frecuencias entre 0 y B que pasa por las 2^SF muestras del símbolo."""
+
+    X = np.fft.fft(x.reshape(-1, p.M), axis=1)
+    X_fine = np.zeros((X.shape[0], p.M * L), dtype=complex)
+    X_fine[:, : p.M] = X  # Mismos bins de 0 a B, sin componentes nuevas
+    return (np.fft.ifft(X_fine, axis=1) * L).ravel()
+
+
+def _sample_frequency(ax: Axes, x: np.ndarray, symbols: np.ndarray, p: LoRaParams) -> None:
+    """Frecuencia de `x` medida entre cada par de muestras consecutivas de un mismo símbolo (avance
+    de la fase por muestra), entre 0 y B, junto con la frecuencia inicial s B / 2^SF del símbolo."""
+
+    X = x.reshape(-1, p.M)
+    cycles = np.angle(X[:, 1:] * np.conj(X[:, :-1])) / (2 * np.pi)  # Avance por muestra, en ciclos
+    cycles[cycles < -1e-9] += 1  # De [-1/2, 1/2) a [0, 1): frecuencias entre 0 y B
+    f_kHz = np.clip(cycles, 0, None) * p.B / 1e3
+    for n, (f, s) in enumerate(zip(f_kHz, symbols)):
+        ax.plot(n * p.M + np.arange(1, p.M) - 0.5, f, "k.", ms=3)
+        ax.hlines(
+            s * p.B / p.M / 1e3,
+            n * p.M,
+            (n + 1) * p.M,
+            colors="C1",
+            ls="--",
+            lw=1,
+            label=r"$s\,B/2^{SF}$" if n == 0 else None,
+        )
+    ax.set(
+        title="Frecuencia de $d$ entre muestras consecutivas (avance de la fase por muestra)",
+        xlabel="Muestras",
+        ylabel="Frecuencia (kHz)",
+        ylim=(-0.05 * p.B / 1e3, 1.05 * p.B / 1e3),
+    )
+    _vlines(ax, np.arange(len(symbols) + 1) * p.M)
+    ax.legend(loc="upper left", fontsize="small")
+
+
+def demodulation_signals(symbols: np.ndarray, p: LoRaParams, L: int = 8) -> Figure:
+    """Señales del demodulador sin ruido: la señal modulada c~, el down-chirp que genera el
+    demodulador y su producto d(nT_s + kT), cada una con su parte real y su espectrograma. Para d
+    se agrega su frecuencia medida entre muestras consecutivas.
+
+    d solo existe en las muestras, porque el demodulador multiplica muestras. Su línea es la
+    interpolación de banda limitada de esas muestras, no el producto de c~ y el down-chirp entre
+    muestras.
+
+    Args:
+        symbols (np.ndarray): Símbolos a modular.
+        p (LoRaParams): Parámetros del sistema.
+        L (int): Puntos por chip de la parte real.
+
+    Returns:
+        Figure: Figura con siete gráficos.
+    """
+
+    n = len(symbols)
+    c, dc = modulator(symbols, p), downchirp(p, n)
+    d = c * dc
+
+    fig, axs = plt.subplots(7, 1, figsize=(10, 16))
+    _time_and_spectrogram(axs[0:2], c, modulator(symbols, p, L), r"\tilde{c}", p, L)
+    _time_and_spectrogram(
+        axs[2:4], dc, downchirp(p, n, L), r"e^{-j2\pi k^2/(2 \cdot 2^{SF})}", p, L
+    )
+    _time_and_spectrogram(
+        axs[4:6],
+        d,
+        _interpolate(d, p, L),
+        r"d = \tilde{c}\, e^{-j2\pi k^2/(2 \cdot 2^{SF})}",
+        p,
+        L,
+        "puntos: muestras, línea: interpolación de las muestras",
+    )
+    _sample_frequency(axs[6], d, symbols, p)
     fig.tight_layout()
     return fig
 
@@ -138,12 +231,16 @@ def fft_decision(
     n = len(symbols_tx)
     fig, axs = plt.subplots(n, 1, figsize=(10, 2.5 * n), squeeze=False)
     for i, ax in enumerate(axs[:, 0]):
-        ax.plot(np.abs(D[i]) ** 2, color="green")
+        P = np.abs(D[i]) ** 2
+        ax.plot(P, color="green")
         title = f"Símbolo n={i}: transmitido s={symbols_tx[i]}, decidido ŝ={symbols_rx[i]}"
         if SNR_dB is not None:
             ax.axvline(symbols_tx[i], color="k", ls="--", lw=0.8)
             title += f" (SNR={SNR_dB} dB)"
-        ax.set(title=title, xlabel="q (índice de la FFT)", ylabel="$|D|^2$")
+        # Eje desde 0: con |D|^2 casi constante, la escala automática amplifica el redondeo
+        ax.set(
+            title=title, xlabel="q (índice de la FFT)", ylabel="$|D|^2$", ylim=(0, 1.1 * P.max())
+        )
     fig.tight_layout()
     return fig
 
@@ -631,7 +728,8 @@ def fer_sdr(
     """
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot(SNRs_sim_dB, fer_sim, label="Simulación (canal plano)")
+    # Un punto por SNR simulado, para distinguirlos de los tramos interpolados
+    ax.plot(SNRs_sim_dB, fer_sim, "o-", ms=3, label="Simulación (canal plano)")
     ax.plot(snr[fer > 0], fer[fer > 0], "o", color="C1", label="SDR")
     if np.any(fer == 0):
         ax.plot(
@@ -645,6 +743,7 @@ def fer_sdr(
     ax.set_yscale("log", nonpositive="mask")
     snrs = np.r_[SNRs_sim_dB, snr]
     ax.set_xlim(snrs.min() - 0.5, snrs.max() + 0.5)
+    ax.xaxis.set_major_locator(MultipleLocator(1))  # Una marca por dB, como los SNR simulados
     ax.set(title="FER: simulación y SDR", xlabel="SNR [dB]", ylabel="FER")
     ax.grid(True, which="both", alpha=0.5)
     ax.legend()

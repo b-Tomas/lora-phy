@@ -20,7 +20,7 @@ from . import params
 from .detection import detect_full
 from .metrics import power
 from .params import LoRaParams
-from .tx import modulator, preamble
+from .tx import MODULATION, modulator, preamble
 
 LO_FREQ = 905e6  # Portadora
 TX_ATTEN_DB = -10  # Atenuación del TX al conectar
@@ -221,6 +221,103 @@ def measure(
     return symbols, gaps, r, gain
 
 
+def measure_at_snr(
+    sdr,
+    p: LoRaParams,
+    target_dB: float,
+    scale_dB: float,
+    n_frames: int,
+    num_symbols: int,
+    gap_range: tuple[int, int],
+    tol_dB: float = 0.5,
+    max_tries: int = 5,
+    max_step_dB: float = 3.0,
+) -> tuple[tuple, float, float]:
+    """`measure` con la escala del TX que lleva el SNR medido a `target_dB`.
+
+    Por el aire, el SNR que da una misma escala varía alrededor de 1 dB entre capturas. Se mide con
+    `scale_dB` y, si el SNR medido se aleja más de `tol_dB` del buscado, se corrige la escala en la
+    diferencia y se mide de nuevo, hasta `max_tries` veces. Cada corrección se limita a
+    `max_step_dB`, para que una captura con interferencia no lleve la escala lejos. Se queda la
+    medición más cercana al SNR buscado.
+
+    Args:
+        sdr (adi.Pluto): SDR configurado, con el ruido térmico del RX por encima de la señal.
+        p (LoRaParams): Parámetros del sistema.
+        target_dB (float): SNR buscado, en dB.
+        scale_dB (float): Escala inicial, en dB (`measure`).
+        n_frames, num_symbols, gap_range: Como en `measure`.
+        tol_dB (float): Diferencia aceptada entre el SNR medido y el buscado, en dB.
+        max_tries (int): Mediciones como máximo.
+        max_step_dB (float): Corrección máxima de la escala entre mediciones, en dB.
+
+    Returns:
+        tuple[tuple, float, float]: Salida de `measure`, escala usada en dB y SNR medido en dB.
+    """
+
+    best = None  # (|error|, salida de measure, escala, SNR) de la medición más cercana
+    for _ in range(max_tries):
+        run = measure(sdr, p, n_frames, num_symbols, gap_range, scale_dB=scale_dB)
+        snr = capture_snr(run[2], run[0], run[1], p)
+        error = target_dB - snr
+        if best is None or abs(error) < best[0]:
+            best = (abs(error), run, scale_dB, snr)
+        if abs(error) <= tol_dB:
+            break
+        # La escala no puede pasar el pico del TX (0 dB)
+        scale_dB = min(scale_dB + float(np.clip(error, -max_step_dB, max_step_dB)), 0.0)
+    return best[1], best[2], best[3]
+
+
+def measure_snr_sweep(
+    sdr,
+    p: LoRaParams,
+    targets_dB: np.ndarray,
+    n_frames: int,
+    num_symbols: int,
+    gap_range: tuple[int, int],
+    scale_ref_dB: float = -22.0,
+    n_ref_frames: int = 20,
+) -> tuple[list, np.ndarray]:
+    """Un punto por SNR de `targets_dB`, con `measure_at_snr`.
+
+    La primera escala sale de una medición corta con `scale_ref_dB`, donde el SNR se mide con
+    poco error. Con el ruido térmico del RX fijo, el SNR cambia lo mismo que la escala, así que la
+    escala para un SNR es el SNR menos la diferencia entre SNR y escala medida. Esa diferencia se
+    actualiza con cada punto que llega al SNR buscado, para seguir las variaciones del canal.
+
+    Args:
+        sdr (adi.Pluto): SDR configurado.
+        p (LoRaParams): Parámetros del sistema.
+        targets_dB (np.ndarray): SNR buscado de cada punto, en dB.
+        n_frames, num_symbols, gap_range: Como en `measure`.
+        scale_ref_dB (float): Escala de la medición de referencia, en dB.
+        n_ref_frames (int): Tramas de la medición de referencia.
+
+    Returns:
+        tuple[list, np.ndarray]: Salidas de `measure`, una por punto (para `stack`), y escala
+        usada en cada punto, en dB.
+    """
+
+    symbols, gaps, r, _ = measure(
+        sdr, p, n_ref_frames, num_symbols, gap_range, scale_dB=scale_ref_dB
+    )
+    offset_dB = capture_snr(r, symbols, gaps, p) - scale_ref_dB  # SNR medido menos escala
+    runs, scales_dB = [], []
+    for target_dB in targets_dB:
+        run, scale_dB, snr = measure_at_snr(
+            sdr, p, target_dB, target_dB - offset_dB, n_frames, num_symbols, gap_range
+        )
+        print(
+            f"SNR buscado {target_dB:5.1f} dB: escala {scale_dB:5.1f} dB, SNR medido {snr:5.1f} dB"
+        )
+        if abs(snr - target_dB) <= 0.5:  # Una captura que no llegó no corrige la referencia
+            offset_dB = snr - scale_dB
+        runs.append(run)
+        scales_dB.append(scale_dB)
+    return runs, np.array(scales_dB)
+
+
 def adc_peak(x: np.ndarray) -> float:
     """Mayor valor absoluto de I y Q."""
 
@@ -276,6 +373,21 @@ def receive(
             break  # Trama cortada al final de la captura
         starts.append(pos - frame_len)
     return np.array(starts, dtype=int)
+
+
+def _delay(r: np.ndarray, x: np.ndarray) -> int:
+    """Retardo de la captura `r` respecto del buffer `x`: la muestra i del buffer está en la muestra
+    (i + delay) mod L de la captura. Es el máximo de la correlación circular."""
+
+    return int(np.argmax(np.abs(np.fft.ifft(np.fft.fft(r[: x.size]) * np.conj(np.fft.fft(x))))))
+
+
+def capture_snr(r: np.ndarray, symbols: np.ndarray, gaps: np.ndarray, p: LoRaParams) -> float:
+    """SNR de una captura de `measure`, como en `evaluate`: alinea el buffer transmitido con la
+    captura y usa `snr_dB`."""
+
+    x = frames(symbols, gaps, p)
+    return snr_dB(np.roll(r[: x.size], -_delay(r, x)), x)
 
 
 def snr_dB(r: np.ndarray, x: np.ndarray) -> float:
@@ -334,7 +446,7 @@ def evaluate(
     # Inicio de cada trama en el buffer: los silencios hasta ella inclusive y las tramas anteriores
     in_buffer = np.cumsum(gaps) + np.arange(len(gaps)) * frame_len
     # Retardo de la captura: la muestra i del buffer está en la muestra (i + delay) mod L
-    delay = int(np.argmax(np.abs(np.fft.ifft(np.fft.fft(r[:L]) * np.conj(np.fft.fft(x))))))
+    delay = _delay(r, x)
     # Inicio real de cada trama, una vez cada una, después de los dos primeros períodos más
     # largos: el receptor se sincroniza en ellos y puede perder alguna trama
     real = 2 * longest + (in_buffer + delay - 2 * longest) % L
@@ -376,19 +488,37 @@ def evaluate_all(captures: np.ndarray, meta: dict, p: LoRaParams, P_FA: float) -
 
 
 def acquire(
-    path: str, run: Callable, p: LoRaParams, uri: str | None, loopback: int = 0
+    path: str, run: Callable, p: LoRaParams, uri: str | None, loopback: int = 0, lora: bool = True
 ) -> tuple[np.ndarray, dict]:
     """Capturas de un paso del experimento y sus metadatos.
 
     Con `uri`, mide con el SDR (`run(pluto)` devuelve capturas y metadatos) y las guarda en `path`.
     Sin `uri`, carga las guardadas o, si no hay, mide con `SimulatedPluto` sin guardar.
+
+    Con `lora`, las capturas contienen tramas: se guardan con la modulación de `tx.modulator`
+    (`tx.MODULATION`), y una captura guardada con otra modulación no se carga, porque el receptor
+    la evaluaría con otra plantilla. Las capturas sin esa marca son de Ec. 2.
+
+    Raises:
+        ValueError: Si la captura guardada en `path` es de otra modulación.
     """
 
     if uri is not None:
         with session(uri, p, loopback) as pluto:
             captures, meta = run(pluto)
+        if lora:
+            meta = {**meta, "modulation": MODULATION}
         save(path, captures, **meta)
     elif not Path(path).exists():
         print(f"Sin {path}: Pluto simulado (canal plano, sin ruido ni distorsión del equipo)")
         return run(SimulatedPluto())
-    return load(path)
+
+    captures, meta = load(path)
+    if lora:
+        found = str(meta.pop("modulation", "Ec. 2"))
+        if found != MODULATION:
+            raise ValueError(
+                f"{path} se capturó con otra modulación ({found}) y el receptor usa "
+                f"{MODULATION}: medir de nuevo con el SDR (USE_SDR = True)"
+            )
+    return captures, meta
