@@ -10,7 +10,9 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from .channel import FLAT
 from .params import LoRaParams
+from .rx import dechirp, dechirp_fft
 from .sdr import ADC_FULL_SCALE
 from .simulation import RocCurves
 from .tx import instantaneous_frequency, modulator
@@ -18,7 +20,7 @@ from .tx import instantaneous_frequency, modulator
 # Nombre y color de cada método de detección, por clave de método
 _METHODS = {
     "full": ("Tiempo (preámbulo completo)", "C0"),
-    "peaks": ("Tiempo (8 picos)", "C2"),
+    "peaks": ("Tiempo (8 impulsos)", "C2"),
     "freq": ("Frecuencia (demodulación)", "C1"),
     "ideal": ("Detección ideal", "k"),
 }
@@ -28,17 +30,20 @@ _NFFT = 16
 
 
 def _specgram(ax: Axes, x: np.ndarray, p: LoRaParams) -> None:
-    """Espectrograma de `x` con el eje x en muestras, como los demás gráficos."""
+    """Espectrograma de `x` con el eje x en muestras, como los demás gráficos.
 
-    # xextent: cada ventana se ubica en su centro
+    Se agregan _NFFT/2 ceros a cada lado para que haya una ventana centrada en cada muestra de `x`,
+    también en los bordes."""
+
+    pad = np.zeros(_NFFT // 2)
     ax.specgram(
-        x,
+        np.concatenate([pad, x, pad]),
         NFFT=_NFFT,
         noverlap=_NFFT - 1,
         Fs=p.B / 1e3,
         sides="twosided",
         scale="linear",
-        xextent=(_NFFT / 2, x.size - _NFFT / 2),
+        xextent=(0, x.size),
     )
 
 
@@ -55,6 +60,15 @@ def _vlines(ax: Axes, xs) -> None:
 
     for x in xs:
         ax.axvline(x, color="w" if ax.images else "k", ls="--", lw=0.8)
+
+
+def _real_part(ax: Axes, x_fine: np.ndarray, x: np.ndarray, L: int, title: str) -> None:
+    """Parte real de una señal: curva evaluada con L puntos por chip, para que se vea la forma de
+    la onda sin aliasing, y puntos en las muestras."""
+
+    ax.plot(np.arange(x_fine.size) / L, np.real(x_fine), lw=0.5)
+    ax.plot(np.real(x), "k.", ms=3)
+    ax.set(title=title, ylabel="Amplitud")
 
 
 def _annotate_frame(ax: Axes, gap: int, p: LoRaParams, n_samples: int) -> None:
@@ -101,12 +115,9 @@ def modulated_signal(
 
     c = modulate(symbols, p)  # Muestras
     c_fine = modulate(symbols, p, L)  # Entre muestras
-    t = np.arange(c_fine.size) / L  # Tiempo en muestras
 
     fig, axs = plt.subplots(2, 1, figsize=(10, 4.5))
-    axs[0].plot(t, np.real(c_fine), lw=0.5)
-    axs[0].plot(np.real(c), "k.", ms=3)
-    axs[0].set(title=f"Parte real de ${name}$ (puntos: muestras)", ylabel="Amplitud")
+    _real_part(axs[0], c_fine, c, L, f"Parte real de ${name}$ (puntos: muestras)")
     _specgram(axs[1], _centered(c), p)
     axs[1].set(
         title=f"Espectrograma de ${name}\\,(-1)^k$ (centrado en la banda)",
@@ -119,32 +130,144 @@ def modulated_signal(
     return fig
 
 
+def _periodogram(ax: Axes, P: np.ndarray, s: int, p: LoRaParams) -> int:
+    """Periodograma $|\\langle r, c|_{s=q} \\rangle|^2$ de un símbolo, con el bin del símbolo
+    transmitido en rojo y el del decidido en azul (violeta si coinciden). Devuelve el símbolo
+    decidido."""
+
+    s_hat = int(np.argmax(P))
+    ax.stem(P, linefmt="g-", markerfmt="g.", basefmt=" ")
+    marks = {s: "tab:purple"} if s == s_hat else {s: "tab:red", s_hat: "tab:blue"}
+    for q, color in marks.items():
+        stem = ax.stem([q], [P[q]], linefmt=color, markerfmt=".", basefmt=" ")
+        stem.markerline.set_color(color)
+        stem.stemlines.set_linewidth(2.5)  # Tapa la línea verde del mismo bin
+    ax.set(xlabel="q (índice de la FFT)", ylabel="Potencia")
+    # Eje superior en frecuencia: el bin q corresponde a q B / 2^SF
+    kHz_per_bin = p.B / p.M / 1e3
+    top = ax.secondary_xaxis(
+        "top",
+        functions=(lambda q: np.asarray(q) * kHz_per_bin, lambda f: np.asarray(f) / kHz_per_bin),
+    )
+    top.set_xlabel("Frecuencia (kHz)")
+    return s_hat
+
+
 def fft_decision(
-    D: np.ndarray, symbols_tx: np.ndarray, symbols_rx: np.ndarray, SNR_dB: float | None = None
+    Ds: dict[str, np.ndarray], symbols_tx: np.ndarray, p: LoRaParams, SNR_dB: float | None = None
 ) -> Figure:
-    """Salida de la FFT del demodulador, $|D|^2$, para cada símbolo recibido.
+    """Periodograma de cada símbolo recibido, como en `dechirp_steps`, con una columna por canal.
 
     Args:
-        D (np.ndarray): Salida de `rx.dechirp_fft`, de forma (N, 2^SF).
+        Ds (dict[str, np.ndarray]): Salida de `rx.dechirp_fft`, de forma (N, 2^SF), por nombre del
+            canal.
         symbols_tx (np.ndarray): Símbolos transmitidos.
-        symbols_rx (np.ndarray): Símbolos decididos.
-        SNR_dB (float | None): SNR del canal. Si se indica, se agrega al título y se marca el
-            símbolo transmitido, para comparar con el pico.
+        p (LoRaParams): Parámetros del sistema.
+        SNR_dB (float | None): SNR del canal. Si se indica, se agrega al título general.
 
     Returns:
-        Figure: Figura con un gráfico por símbolo.
+        Figure: Figura con un gráfico por símbolo y canal.
     """
 
-    n = len(symbols_tx)
-    fig, axs = plt.subplots(n, 1, figsize=(10, 2.5 * n), squeeze=False)
-    for i, ax in enumerate(axs[:, 0]):
-        ax.plot(np.abs(D[i]) ** 2, color="green")
-        title = f"Símbolo n={i}: transmitido s={symbols_tx[i]}, decidido ŝ={symbols_rx[i]}"
-        if SNR_dB is not None:
-            ax.axvline(symbols_tx[i], color="k", ls="--", lw=0.8)
-            title += f" (SNR={SNR_dB} dB)"
-        ax.set(title=title, xlabel="q (índice de la FFT)", ylabel="$|D|^2$")
+    n, m = len(symbols_tx), len(Ds)
+    # Misma escala en cada fila para comparar los canales
+    fig, axs = plt.subplots(
+        n, m, figsize=(10 if m == 1 else 7 * m, 3 * n), squeeze=False, sharey="row"
+    )
+    for j, (channel, D) in enumerate(Ds.items()):
+        for i, s in enumerate(symbols_tx):
+            s_hat = _periodogram(axs[i, j], np.abs(D[i]) ** 2, s, p)
+            axs[i, j].set_title(f"{channel}, símbolo n={i}: transmitido s={s}, decidido ŝ={s_hat}")
+    if SNR_dB is not None:
+        fig.suptitle(f"SNR={SNR_dB} dB")
     fig.tight_layout()
+    return fig
+
+
+def _path_amplitudes(
+    ax: Axes, r_fine: np.ndarray, r: np.ndarray, h: np.ndarray, p: LoRaParams, L: int
+) -> None:
+    """Amplitud de r (curva sin ruido entre muestras y puntos en las muestras) y amplitud
+    constante de cada camino del canal, que se suman en fase o en contrafase según la frecuencia
+    del chirp."""
+
+    ax.plot(np.arange(r_fine.size) / L, np.abs(r_fine), lw=0.8, label="$|r|$")
+    ax.plot(np.abs(r), "k.", ms=3)
+    for i, h_i in enumerate(h):
+        label = "Camino directo" if i == 0 else "Eco"
+        ax.axhline(abs(h_i) / np.sqrt(p.M), color=f"C{i + 2}", ls="--", lw=1.2, label=label)
+    # Lugar arriba de la curva para la leyenda
+    ax.set(
+        title="Amplitud de $r$ y de cada camino del canal",
+        ylabel="Amplitud",
+        ylim=(0, 1.35 * np.abs(h).sum() / np.sqrt(p.M)),
+    )
+    ax.legend(loc="upper center", ncol=3, fontsize="small")
+
+
+def dechirp_steps(
+    r: np.ndarray,
+    s: int,
+    p: LoRaParams,
+    SNR_dB: float | None = None,
+    h: np.ndarray = FLAT,
+    L: int = 32,
+) -> Figure:
+    """Demodulación de un símbolo paso a paso: r, su espectrograma, d y periodograma de d.
+
+    r y d se grafican como en `modulated_signal`: la curva evalúa la señal sin ruido entre
+    muestras, con L puntos por chip, y los puntos son las muestras recibidas.
+
+    Args:
+        r (np.ndarray): Un símbolo recibido, de 2^SF muestras.
+        s (int): Símbolo transmitido.
+        p (LoRaParams): Parámetros del sistema.
+        SNR_dB (float | None): SNR del canal. Si se indica, se agrega al título.
+        h (np.ndarray): Respuesta al impulso del canal, para que la curva sin ruido pase por las
+            muestras recibidas.
+        L (int): Puntos por chip de las curvas.
+
+    Returns:
+        Figure: Figura con los cuatro gráficos.
+    """
+
+    # Señal sin ruido entre muestras: un camino por coeficiente de h, el chirp escalado por h[i]
+    # y retrasado i chips (i L puntos)
+    c0 = modulator(np.array([s]), p, L)
+    paths = [h_i * np.concatenate([np.zeros(i * L), c0])[: c0.size] for i, h_i in enumerate(h)]
+    c_fine = np.sum(paths, axis=0)
+
+    # Con eco se agrega después de r un gráfico de amplitud
+    echo = len(paths) > 1
+    fig, axs = plt.subplots(4 + echo, 1, figsize=(10, 10 + 2.5 * echo))
+    ax_r = axs[0]
+    ax_amp, ax_spec, ax_d, ax_P = axs[1:] if echo else (None, *axs[1:])
+
+    _real_part(ax_r, c_fine, r, L, "Parte real de $r$ (curva: sin ruido, puntos: muestras)")
+    if ax_amp is not None:
+        _path_amplitudes(ax_amp, c_fine, r, h, p, L)
+    _specgram(ax_spec, _centered(r), p)
+    ax_spec.set(
+        title="Espectrograma de $r\\,(-1)^k$ (centrado en la banda)", ylabel="Frecuencia (kHz)"
+    )
+    _real_part(
+        ax_d,
+        dechirp(c_fine, p, L)[0],
+        dechirp(r, p)[0],
+        L,
+        "Parte real de $d$ (curva: sin ruido, puntos: muestras)",
+    )
+    for ax in axs[:-1]:
+        ax.set(xlabel="Muestras", xlim=(0, p.M))
+    s_hat = _periodogram(ax_P, np.abs(dechirp_fft(r, p)[0]) ** 2, s, p)
+    ax_P.set_title(
+        f"Periodograma de $d$, $|\\langle r, c|_{{s=q}} \\rangle|^2$ (decidido ŝ={s_hat})"
+    )
+    title = f"Símbolo transmitido s={s}"
+    if SNR_dB is not None:
+        title += f", SNR={SNR_dB} dB"
+    fig.suptitle(title)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.3 / fig.get_figheight()))  # Lugar para el título
     return fig
 
 
@@ -171,20 +294,16 @@ def ber_vs_snr(SNRs_dB: np.ndarray, bers: dict[str, np.ndarray]) -> Figure:
 # --- Detección de una trama ------------------------------------------------------------------
 
 
-def frame_structure(
-    r: np.ndarray, symbols_tx: np.ndarray, gap: int, p: LoRaParams, SNR_dB: float
-) -> Figure:
-    """Estructura de la trama: frecuencia instantánea transmitida y espectrograma recibido.
+def frame_structure(symbols_tx: np.ndarray, gap: int, p: LoRaParams) -> Figure:
+    """Estructura de la trama: frecuencia instantánea transmitida.
 
     Args:
-        r (np.ndarray): Señal recibida (`channel.transmit_frame`).
         symbols_tx (np.ndarray): Símbolos del payload.
         gap (int): Símbolos de silencio antes de la trama.
         p (LoRaParams): Parámetros del sistema.
-        SNR_dB (float): SNR del canal.
 
     Returns:
-        Figure: Figura con los dos gráficos.
+        Figure: Figura con el gráfico.
     """
 
     # Frecuencia instantánea sin ruido, con fines pedagógicos
@@ -200,15 +319,14 @@ def frame_structure(
         ]
     )
 
-    fig, axs = plt.subplots(2, 1, figsize=(10, 6))
-    axs[0].plot(f / 1e3, color="green")
-    axs[0].set(title="Trama transmitida (frecuencia instantánea)")
-    # Con SNR negativo la trama no se distingue a simple vista en el espectrograma
-    _specgram(axs[1], r, p)
-    axs[1].set(title=f"Trama recibida (espectrograma, SNR={SNR_dB} dB)")
-    for ax in axs:
-        ax.set(xlabel="Muestras", ylabel="Frecuencia (kHz)")
-        _annotate_frame(ax, gap, p, r.size)
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.plot(f / 1e3, color="green")
+    ax.set(
+        title="Trama transmitida (frecuencia instantánea)",
+        xlabel="Muestras",
+        ylabel="Frecuencia (kHz)",
+    )
+    _annotate_frame(ax, gap, p, f.size)
     fig.tight_layout()
     return fig
 
@@ -226,7 +344,7 @@ def upchirp_correlation(
         SNR_dB (float): SNR de la trama con ruido.
 
     Returns:
-        Figure: Figura con los tres gráficos.
+        Figure: Figura con los cuatro gráficos.
     """
 
     n_samples = y.size + p.M - 1  # Largo de la señal recibida
@@ -239,7 +357,7 @@ def upchirp_correlation(
     for ax in axs[:2]:
         _annotate_frame(ax, gap, p, n_samples)
 
-    # Detalle sin ruido del inicio del preámbulo: un pico en cada borde de símbolo y otro en el
+    # Detalle sin ruido del inicio del preámbulo: un impulso en cada borde de símbolo y otro en el
     # medio
     axs[2].plot(np.abs(y_clean) ** 2, marker=".", color="green", lw=0.8)
     for n in range(4):
@@ -313,11 +431,11 @@ def peaks_detection(
     P_FA: float,
     SNR_dB: float,
 ) -> Figure:
-    """Correlación móvil con los picos del inicio detectado, y estadístico S[k] con su umbral.
+    """Correlación móvil con los impulsos del inicio detectado, y estadístico S[k] con su umbral.
 
     Args:
         y (np.ndarray): Correlación móvil con un up-chirp sobre la trama con ruido.
-        S (np.ndarray): Estadístico de la búsqueda de picos.
+        S (np.ndarray): Estadístico de la búsqueda de impulsos.
         eta_S (float): Umbral de decisión.
         start (int | None): Muestra de inicio detectada, o None.
         gap (int): Símbolos de silencio antes de la trama.
@@ -334,7 +452,7 @@ def peaks_detection(
     fig, axs = plt.subplots(2, 1, figsize=(10, 6))
     axs[0].plot(np.abs(y) ** 2, color="green", lw=0.8)
     if start is not None:
-        # Los picos que suma S[k] en el inicio detectado
+        # Los impulsos que suma S[k] en el inicio detectado
         peaks = start + np.arange(p.n_upchirps) * p.M
         axs[0].plot(
             peaks,
@@ -342,7 +460,7 @@ def peaks_detection(
             "o",
             mfc="none",
             color="r",
-            label=f"{p.n_upchirps} picos del inicio detectado",
+            label=f"{p.n_upchirps} impulsos del inicio detectado",
         )
         axs[0].legend(loc="upper right")
     axs[0].set(title=f"Correlación móvil con un up-chirp (SNR={SNR_dB} dB)", ylabel="$|y[k]|^2$")
@@ -352,7 +470,7 @@ def peaks_detection(
     )
     _detection_marks(axs[1], gap * p.M, start)
     axs[1].set(
-        title=f"Búsqueda de {p.n_upchirps} picos: inicio real k={gap * p.M}, detectado k={start} "
+        title=f"Búsqueda de {p.n_upchirps} impulsos: inicio real k={gap * p.M}, detectado k={start} "
         f"(SNR={SNR_dB} dB)",
         ylabel="$S[k]$",
     )

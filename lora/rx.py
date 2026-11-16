@@ -5,11 +5,39 @@ import numpy as np
 from .params import LoRaParams
 
 
+def dechirp(r: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
+    """Multiplica cada símbolo recibido por el down-chirp (de-chirpeado).
+
+    Args:
+        r (np.ndarray): Señal LoRa modulada recibida.
+        p (LoRaParams): Parámetros del sistema.
+        L (int): Puntos por chip de `r`. Con L > 1 evalúa el down-chirp también entre muestras,
+            para graficar.
+
+    Returns:
+        np.ndarray: d(nT_s + kT) = r(nT_s + kT) e^{-j2π k²/2^SF} para cada símbolo n, de forma
+            (N, 2^SF L).
+    """
+
+    # Validar el largo del array
+    assert r.size % (p.M * L) == 0, "El número de muestras debe ser múltiplo de L * 2**SF"
+
+    # Convertir r a un arreglo de forma (N, M L): R[n, k] = r(nT_s + kT)
+    R = r.reshape(-1, p.M * L)
+
+    # Vector de chips k = 0..M-1, con L puntos por chip
+    k = np.arange(p.M * L) / L  # Vector fila de chips
+
+    # Obtener d(nT_s + kT) = r(nT_s + kT) * downchirp
+    downchirp = np.exp(-1j * 2 * np.pi * k**2 / p.M)
+    return R * downchirp
+
+
 def dechirp_fft(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     """Proyección de la señal recibida sobre los chirps ortogonales, según Ec. 16.
 
-    Multiplica cada símbolo recibido por el down-chirp y calcula su FFT. Es el demodulador sin la
-    decisión: permite ver la salida de la FFT antes de decidir.
+    De-chirpea cada símbolo recibido y calcula su FFT. Es el demodulador sin la decisión: permite
+    ver la salida de la FFT antes de decidir.
 
     Args:
         r (np.ndarray): Señal LoRa modulada recibida.
@@ -19,23 +47,10 @@ def dechirp_fft(r: np.ndarray, p: LoRaParams) -> np.ndarray:
         np.ndarray: D[n, q] = <r, c|_{s=q}> para cada símbolo n, de forma (N, 2^SF).
     """
 
-    # Validar el largo del array
-    assert r.size % p.M == 0, "El número de muestras debe ser múltiplo de 2**SF"
-
-    # Convertir r a un arreglo de forma (N, M): R[n, k] = r(nT_s + kT)
-    R = r.reshape(-1, p.M)
-
-    # Vector de chips k = 0..M-1
-    k = np.arange(p.M)  # Vector fila de chips
-
-    # Obtener d(nT_s + kT) = r(nT_s + kT) * downchirp
-    downchirp = np.exp(-1j * 2 * np.pi * k**2 / p.M)
-    d = R * downchirp
-
     # Transformada de Fourier (discreta) de cada fila (símbolo)
     # norm="ortho" normaliza la FFT para que la salida sea unitaria (conserve la energía de la
     # señal), equivalente a aplicar el factor 1/sqrt(M) de Ec. 16 a la salida de la FFT
-    return np.fft.fft(d, norm="ortho")
+    return np.fft.fft(dechirp(r, p), norm="ortho")
 
 
 def demodulator(r: np.ndarray, p: LoRaParams) -> np.ndarray:

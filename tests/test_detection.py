@@ -23,7 +23,7 @@ def test_full_matches_direct_correlation(p):
 
 
 def test_peaks_threshold(p):
-    # Con un solo pico, S[k] es exponencial y el umbral coincide con el de T[k]
+    # Con un solo impulso, S[k] es exponencial y el umbral coincide con el de T[k]
     q1 = dataclasses.replace(p, n_upchirps=1)
     assert np.isclose(
         detection.peaks_threshold(2.0, 1e-3, q1), detection.time_threshold(2.0, 1e-3, q1)
