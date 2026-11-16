@@ -9,9 +9,13 @@ Requiere el extra `diagramas` (schemdraw):
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import schemdraw
 from schemdraw import dsp
 from schemdraw import elements as elm
+
+from .params import LoRaParams
+from .tx import instantaneous_frequency
 
 OUT = Path(__file__).parent.parent / "diagramas"
 FONT = 13
@@ -286,8 +290,188 @@ def deteccion() -> None:
     save_figure(fig, "deteccion")
 
 
+# --- 4. Filtro adaptado de la detección de trama ---------------------------------------------
+# Método 1 del notebook: correlación con el preámbulo completo (detection.detect_full)
+
+
+def _trama(ax, plantilla: bool, payload: bool) -> None:
+    """Trama en el tiempo: silencio, 8 up-chirps, 2.25 down-chirps y payload, con la cota de la
+    plantilla del filtro adaptado o la del desplazamiento hasta el payload."""
+    ax.set_xlim(-2.2, 21.5)
+    ax.set_ylim(-2.6, 2.4 if plantilla else 0.8)
+    ax.axis("off")
+
+    def bloque(x0, x1, texto, fc):
+        ax.add_patch(plt.Rectangle((x0, -0.5), x1 - x0, 1.0, fc=fc, ec="black", lw=1))
+        if texto:
+            ax.text((x0 + x1) / 2, 0, texto, ha="center", va="center", fontsize=11)
+
+    bloque(-2.0, 0, "silencio", "0.95")
+    for n in range(8):  # Up-chirps: frecuencia que sube
+        bloque(n, n + 1, "", "white")
+        ax.plot([n + 0.15, n + 0.85], [-0.3, 0.3], color="black", lw=1)
+    for n, ancho in enumerate([1, 1, 0.25]):  # 2.25 down-chirps: frecuencia que baja
+        x0 = 8 + n
+        bloque(x0, x0 + ancho, "", "0.88")
+        ax.plot([x0 + 0.15 * ancho, x0 + 0.85 * ancho], [0.3, -0.3], color="black", lw=1)
+    bloque(10.25, 21.0, "payload (10 símbolos)", "0.95")
+
+    def cota(x0, x1, y, texto, va):
+        ax.annotate(
+            "",
+            xy=(x1, y),
+            xytext=(x0, y),
+            arrowprops={"arrowstyle": "<->", "color": "black", "lw": 1.2},
+        )
+        for x in (x0, x1):
+            ax.plot([x, x], [y - 0.2, y + 0.2], color="black", lw=1)
+        dy = 0.25 if va == "bottom" else -0.25
+        ax.text((x0 + x1) / 2, y + dy, texto, ha="center", va=va, fontsize=11)
+
+    def marca(x, texto, fontsize):
+        ax.annotate(
+            texto,
+            xy=(x, -0.55),
+            xytext=(x, -2.35),
+            ha="center",
+            fontsize=fontsize,
+            arrowprops={"arrowstyle": "-|>", "color": "black", "lw": 1},
+        )
+
+    if plantilla:
+        cota(0, 8, 1.1, "plantilla $p$: 8 up-chirps ($8 \\cdot 2^{SF}$ muestras)", "bottom")
+    marca(0, "$\\hat{k}$", 12)
+    if payload:
+        cota(
+            0, 10.25, -1.25, "$10.25 \\cdot 2^{SF}$ muestras: 8 up-chirps + 2.25 down-chirps", "top"
+        )
+        marca(10.25, "inicio del payload", 11)
+
+
+def filtro_adaptado() -> None:
+    # El detector, desde la señal recibida hasta el inicio estimado de la trama
+    L = 2.6
+    d = schemdraw.Drawing(show=False)
+    d.config(fontsize=FONT, bgcolor="white")
+    a = d.add(dsp.Arrow().right().length(L).label("$r[k]$", "top"))
+    mf = d.add(
+        dsp.Box(w=3.6, h=1.6)
+        .at(a.end)
+        .anchor("W")
+        .label("Filtro adaptado\nplantilla $p$:\n8 up-chirps")
+    )
+    a = d.add(dsp.Arrow().at(mf.E).right().length(L).label("$\\langle r_k, p \\rangle$", "top"))
+    mod = d.add(dsp.Box(w=1.8, h=BOX_H).at(a.end).anchor("W").label("$|\\cdot|^2$"))
+    a = d.add(dsp.Arrow().at(mod.E).right().length(L).label("$T[k]$", "top"))
+    cmp_ = d.add(dsp.Box(w=2.4, h=BOX_H).at(a.end).anchor("W").label("$T[k] \\geq \\eta$"))
+    eta = d.add(dsp.Arrow().endpoints((cmp_.S[0], cmp_.S[1] - 1.1), cmp_.S))
+    d.add(
+        elm.Label()
+        .at((eta.start[0], eta.start[1] - 0.5))
+        .label("$\\eta = -8\\sigma^2 \\ln(P_{FA} / 2^{SF})$")
+    )
+    a = d.add(dsp.Arrow().at(cmp_.E).right().length(L).label("primer\ncruce", "top"))
+    mx = d.add(
+        dsp.Box(w=3.6, h=1.6)
+        .at(a.end)
+        .anchor("W")
+        .label("Máximo de $T$ en\nlos $8 \\cdot 2^{SF}$\nsiguientes")
+    )
+    d.add(dsp.Arrow().at(mx.E).right().length(L).label("$\\hat{k}$", "top"))
+    save_drawing(d, "filtro_adaptado")
+
+    # La plantilla sobre la trama, alineada en el inicio estimado
+    fig, ax = plt.subplots(figsize=(13, 2.9))
+    _trama(ax, plantilla=True, payload=False)
+    fig.tight_layout()
+    save_figure(fig, "filtro_adaptado_trama")
+
+
+def inicio_payload() -> None:
+    # Del inicio de la trama al inicio del payload
+    L = 2.6
+    d = schemdraw.Drawing(show=False)
+    d.config(fontsize=FONT, bgcolor="white")
+    a = d.add(dsp.Arrow().right().length(L).label("$\\hat{k}$", "top"))
+    off = d.add(dsp.Box(w=3.0, h=BOX_H).at(a.end).anchor("W").label("$+\\,10.25 \\cdot 2^{SF}$"))
+    a = d.add(dsp.Arrow().at(off.E).right().length(L + 0.6).label("inicio del\npayload", "top"))
+    dem = d.add(dsp.Box(w=3.0, h=BOX_H).at(a.end).anchor("W").label("Demodulador"))
+    d.add(dsp.Arrow().at(dem.E).right().length(L).label("$\\hat{s}(nT_s)$", "top"))
+    save_drawing(d, "inicio_payload")
+
+    # El desplazamiento sobre la trama
+    fig, ax = plt.subplots(figsize=(13, 2.9))
+    _trama(ax, plantilla=False, payload=True)
+    fig.tight_layout()
+    save_figure(fig, "inicio_payload_trama")
+
+
+# --- 5. Composición de la trama ---------------------------------------------------------------
+
+
+def trama() -> None:
+    """Frecuencia nominal de la trama (como `plots.frame_structure`): silencio, 8 up-chirps,
+    2.25 down-chirps y el comienzo del payload."""
+    q = LoRaParams(SF=7, B=125e3)
+    L = 16  # Puntos por chip, para dibujar los chirps continuos
+    payload = np.array([32, 80, 5, 100])  # Primeros símbolos de un payload de ejemplo
+    k = np.arange(q.M * L) / L
+
+    def tramo(f):
+        # Corta la línea donde la frecuencia salta, para no dibujar el salto como un barrido
+        f = f.astype(float).copy()
+        f[1:][np.abs(np.diff(f)) > q.B / 2] = np.nan
+        f[q.M * L :: q.M * L] = np.nan  # Y entre símbolos consecutivos
+        return f / q.B
+
+    up = tramo(instantaneous_frequency(np.zeros(q.n_upchirps, dtype=int), q, L))
+    down = tramo(np.resize(((q.M - k) % q.M) * q.B / q.M, int(q.n_downchirps * q.M * L)))
+    pay = tramo(instantaneous_frequency(payload, q, L))
+
+    gap = 1.0  # Símbolos de silencio dibujados
+    t_up = gap + np.arange(up.size) / (q.M * L)
+    t_down = t_up[-1] + 1 / (q.M * L) + np.arange(down.size) / (q.M * L)
+    t_pay = gap + q.n_upchirps + q.n_downchirps + np.arange(pay.size) / (q.M * L)
+    fin = t_pay[-1] + 0.6
+
+    fig, ax = plt.subplots(figsize=(13, 4.2))
+    zonas = [
+        (0, gap, "silencio", "0.97"),
+        (gap, gap + q.n_upchirps, "preámbulo: 8 up-chirps (símbolo 0)", "white"),
+        (gap + q.n_upchirps, gap + q.n_upchirps + q.n_downchirps, "2.25\ndown-chirps", "0.9"),
+        (gap + q.n_upchirps + q.n_downchirps, fin, "payload", "0.97"),
+    ]
+    for x0, x1, texto, fc in zonas:
+        ax.axvspan(x0, x1, color=fc, zorder=0)
+        ax.axvline(x0, color="0.5", lw=0.8, zorder=1)
+        ax.text((x0 + x1) / 2, 1.12, texto, ha="center", va="bottom", fontsize=11)
+
+    ax.plot(t_up, up, color="black", lw=1.4)
+    ax.plot(t_down, down, color="black", lw=1.4)
+    ax.plot(t_pay, pay, color="black", lw=1.4)
+    for n, s in enumerate(payload):
+        x = gap + q.n_upchirps + q.n_downchirps + n
+        ax.axvline(x, color="0.7", lw=0.6, ls=":", zorder=1)
+        ax.text(x + 0.5, -0.12, f"$s={s}$", ha="center", va="top", fontsize=10)
+    ax.text(fin - 0.05, 0.5, "...", ha="right", va="center", fontsize=14)
+
+    ax.set_xlim(0, fin)
+    ax.set_ylim(-0.25, 1.3)
+    ax.set_yticks([0, 0.5, 1], ["$0$", "$B/2$", "$B$"])
+    ax.set_xticks(np.arange(0, int(fin) + 1))
+    ax.set_xlabel("tiempo (símbolos, $T_s = 2^{SF}/B$)")
+    ax.set_ylabel("frecuencia nominal")
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    fig.tight_layout()
+    save_figure(fig, "trama")
+
+
 if __name__ == "__main__":
     sistema()
     canal()
     deteccion()
+    filtro_adaptado()
+    inicio_payload()
+    trama()
     print("Diagramas generados en", OUT)
