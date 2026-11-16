@@ -20,7 +20,7 @@ from .tx import instantaneous_frequency, modulator
 # Nombre y color de cada método de detección, por clave de método
 _METHODS = {
     "full": ("Tiempo (preámbulo completo)", "C0"),
-    "peaks": ("Tiempo (8 picos)", "C2"),
+    "peaks": ("Tiempo (8 impulsos)", "C2"),
     "freq": ("Frecuencia (demodulación)", "C1"),
     "ideal": ("Detección ideal", "k"),
 }
@@ -357,7 +357,7 @@ def upchirp_correlation(
     for ax in axs[:2]:
         _annotate_frame(ax, gap, p, n_samples)
 
-    # Detalle sin ruido del inicio del preámbulo: un pico en cada borde de símbolo y otro en el
+    # Detalle sin ruido del inicio del preámbulo: un impulso en cada borde de símbolo y otro en el
     # medio
     axs[2].plot(np.abs(y_clean) ** 2, marker=".", color="green", lw=0.8)
     for n in range(4):
@@ -431,11 +431,11 @@ def peaks_detection(
     P_FA: float,
     SNR_dB: float,
 ) -> Figure:
-    """Correlación móvil con los picos del inicio detectado, y estadístico S[k] con su umbral.
+    """Correlación móvil con los impulsos del inicio detectado, y estadístico S[k] con su umbral.
 
     Args:
         y (np.ndarray): Correlación móvil con un up-chirp sobre la trama con ruido.
-        S (np.ndarray): Estadístico de la búsqueda de picos.
+        S (np.ndarray): Estadístico de la búsqueda de impulsos.
         eta_S (float): Umbral de decisión.
         start (int | None): Muestra de inicio detectada, o None.
         gap (int): Símbolos de silencio antes de la trama.
@@ -452,7 +452,7 @@ def peaks_detection(
     fig, axs = plt.subplots(2, 1, figsize=(10, 6))
     axs[0].plot(np.abs(y) ** 2, color="green", lw=0.8)
     if start is not None:
-        # Los picos que suma S[k] en el inicio detectado
+        # Los impulsos que suma S[k] en el inicio detectado
         peaks = start + np.arange(p.n_upchirps) * p.M
         axs[0].plot(
             peaks,
@@ -460,7 +460,7 @@ def peaks_detection(
             "o",
             mfc="none",
             color="r",
-            label=f"{p.n_upchirps} picos del inicio detectado",
+            label=f"{p.n_upchirps} impulsos del inicio detectado",
         )
         axs[0].legend(loc="upper right")
     axs[0].set(title=f"Correlación móvil con un up-chirp (SNR={SNR_dB} dB)", ylabel="$|y[k]|^2$")
@@ -470,7 +470,7 @@ def peaks_detection(
     )
     _detection_marks(axs[1], gap * p.M, start)
     axs[1].set(
-        title=f"Búsqueda de {p.n_upchirps} picos: inicio real k={gap * p.M}, detectado k={start} "
+        title=f"Búsqueda de {p.n_upchirps} impulsos: inicio real k={gap * p.M}, detectado k={start} "
         f"(SNR={SNR_dB} dB)",
         ylabel="$S[k]$",
     )
