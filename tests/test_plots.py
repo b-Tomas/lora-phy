@@ -29,8 +29,10 @@ def test_every_plot_returns_a_figure():
     figures = [
         plots.modulated_signal(symbols, p),
         plots.modulated_signal(symbols, p, tx.integrated_modulator, "\\tilde{c}"),
-        plots.fft_decision(rx.dechirp_fft(c, p), symbols, p),
-        plots.fft_decision(rx.dechirp_fft(c, p), symbols, p, SNR_dB),
+        plots.fft_decision({"Canal plano": rx.dechirp_fft(c, p)}, symbols, p),
+        plots.fft_decision(
+            {"A": rx.dechirp_fft(c, p), "B": rx.dechirp_fft(c, p)}, symbols, p, SNR_dB
+        ),
         plots.dechirp_steps(c[: p.M], 0, p),
         plots.dechirp_steps(c[: p.M], 0, p, SNR_dB),
         plots.dechirp_steps(

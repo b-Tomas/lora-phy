@@ -154,28 +154,32 @@ def _periodogram(ax: Axes, P: np.ndarray, s: int, p: LoRaParams) -> int:
 
 
 def fft_decision(
-    D: np.ndarray, symbols_tx: np.ndarray, p: LoRaParams, SNR_dB: float | None = None
+    Ds: dict[str, np.ndarray], symbols_tx: np.ndarray, p: LoRaParams, SNR_dB: float | None = None
 ) -> Figure:
-    """Periodograma de cada símbolo recibido, como en `dechirp_steps`.
+    """Periodograma de cada símbolo recibido, como en `dechirp_steps`, con una columna por canal.
 
     Args:
-        D (np.ndarray): Salida de `rx.dechirp_fft`, de forma (N, 2^SF).
+        Ds (dict[str, np.ndarray]): Salida de `rx.dechirp_fft`, de forma (N, 2^SF), por nombre del
+            canal.
         symbols_tx (np.ndarray): Símbolos transmitidos.
         p (LoRaParams): Parámetros del sistema.
-        SNR_dB (float | None): SNR del canal. Si se indica, se agrega al título.
+        SNR_dB (float | None): SNR del canal. Si se indica, se agrega al título general.
 
     Returns:
-        Figure: Figura con un gráfico por símbolo.
+        Figure: Figura con un gráfico por símbolo y canal.
     """
 
-    n = len(symbols_tx)
-    fig, axs = plt.subplots(n, 1, figsize=(10, 3 * n), squeeze=False)
-    for i, (ax, s) in enumerate(zip(axs[:, 0], symbols_tx)):
-        s_hat = _periodogram(ax, np.abs(D[i]) ** 2, s, p)
-        title = f"Símbolo n={i}: transmitido s={s}, decidido ŝ={s_hat}"
-        if SNR_dB is not None:
-            title += f", SNR={SNR_dB} dB"
-        ax.set_title(title)
+    n, m = len(symbols_tx), len(Ds)
+    # Misma escala en cada fila para comparar los canales
+    fig, axs = plt.subplots(
+        n, m, figsize=(10 if m == 1 else 7 * m, 3 * n), squeeze=False, sharey="row"
+    )
+    for j, (channel, D) in enumerate(Ds.items()):
+        for i, s in enumerate(symbols_tx):
+            s_hat = _periodogram(axs[i, j], np.abs(D[i]) ** 2, s, p)
+            axs[i, j].set_title(f"{channel}, símbolo n={i}: transmitido s={s}, decidido ŝ={s_hat}")
+    if SNR_dB is not None:
+        fig.suptitle(f"SNR={SNR_dB} dB")
     fig.tight_layout()
     return fig
 
