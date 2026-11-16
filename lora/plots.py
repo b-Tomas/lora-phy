@@ -294,20 +294,16 @@ def ber_vs_snr(SNRs_dB: np.ndarray, bers: dict[str, np.ndarray]) -> Figure:
 # --- Detección de una trama ------------------------------------------------------------------
 
 
-def frame_structure(
-    r: np.ndarray, symbols_tx: np.ndarray, gap: int, p: LoRaParams, SNR_dB: float
-) -> Figure:
-    """Estructura de la trama: frecuencia instantánea transmitida y espectrograma recibido.
+def frame_structure(symbols_tx: np.ndarray, gap: int, p: LoRaParams) -> Figure:
+    """Estructura de la trama: frecuencia instantánea transmitida.
 
     Args:
-        r (np.ndarray): Señal recibida (`channel.transmit_frame`).
         symbols_tx (np.ndarray): Símbolos del payload.
         gap (int): Símbolos de silencio antes de la trama.
         p (LoRaParams): Parámetros del sistema.
-        SNR_dB (float): SNR del canal.
 
     Returns:
-        Figure: Figura con los dos gráficos.
+        Figure: Figura con el gráfico.
     """
 
     # Frecuencia instantánea sin ruido, con fines pedagógicos
@@ -323,15 +319,14 @@ def frame_structure(
         ]
     )
 
-    fig, axs = plt.subplots(2, 1, figsize=(10, 6))
-    axs[0].plot(f / 1e3, color="green")
-    axs[0].set(title="Trama transmitida (frecuencia instantánea)")
-    # Con SNR negativo la trama no se distingue a simple vista en el espectrograma
-    _specgram(axs[1], r, p)
-    axs[1].set(title=f"Trama recibida (espectrograma, SNR={SNR_dB} dB)")
-    for ax in axs:
-        ax.set(xlabel="Muestras", ylabel="Frecuencia (kHz)")
-        _annotate_frame(ax, gap, p, r.size)
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.plot(f / 1e3, color="green")
+    ax.set(
+        title="Trama transmitida (frecuencia instantánea)",
+        xlabel="Muestras",
+        ylabel="Frecuencia (kHz)",
+    )
+    _annotate_frame(ax, gap, p, f.size)
     fig.tight_layout()
     return fig
 

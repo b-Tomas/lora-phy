@@ -39,7 +39,7 @@ def test_every_plot_returns_a_figure():
             channel.system(c[: p.M], channel.FREQ_SELECTIVE, 0), 0, p, h=channel.FREQ_SELECTIVE
         ),
         plots.ber_vs_snr(snrs, {"Canal plano": np.array([0.1, 0.01])}),
-        plots.frame_structure(r, payload, gap, p, SNR_dB),
+        plots.frame_structure(payload, gap, p),
         plots.upchirp_correlation(y_clean, y, gap, p, SNR_dB),
         plots.full_preamble_detection(
             T,
