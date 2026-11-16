@@ -27,10 +27,34 @@ def downchirp(p: LoRaParams, n_symbols: int = 1, L: int = 1) -> np.ndarray:
     return np.tile(np.exp(-1j * 2 * np.pi * k**2 / (2 * p.M)), n_symbols)
 
 
+def dechirp(r: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
+    """Multiplica cada símbolo recibido por el down-chirp de `downchirp` (de-chirpeado).
+
+    Args:
+        r (np.ndarray): Señal LoRa modulada recibida.
+        p (LoRaParams): Parámetros del sistema.
+        L (int): Puntos por chip de `r`. Con L > 1 evalúa el down-chirp también entre muestras,
+            para graficar.
+
+    Returns:
+        np.ndarray: d(nT_s + kT) = r(nT_s + kT) e^{-j2π k²/(2 · 2^SF)} para cada símbolo n, de
+            forma (N, 2^SF L).
+    """
+
+    # Validar el largo del array
+    assert r.size % (p.M * L) == 0, "El número de muestras debe ser múltiplo de L * 2**SF"
+
+    # Convertir r a un arreglo de forma (N, M L): R[n, k] = r(nT_s + kT)
+    R = r.reshape(-1, p.M * L)
+
+    # Obtener d(nT_s + kT) = r(nT_s + kT) * downchirp
+    return R * downchirp(p, L=L)
+
+
 def dechirp_fft(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     """Proyección de la señal recibida sobre los chirps ortogonales, como en Ec. 16.
 
-    Multiplica cada símbolo recibido por el down-chirp de `downchirp` (Ec. 16 con k^2/2 en lugar de
+    De-chirpea cada símbolo recibido con el down-chirp de `downchirp` (Ec. 16 con k^2/2 en lugar de
     k^2, porque `tx.modulator` tiene k/2) y calcula su FFT. Es el demodulador sin la decisión:
     permite ver la salida de la FFT antes de decidir.
 
@@ -42,19 +66,10 @@ def dechirp_fft(r: np.ndarray, p: LoRaParams) -> np.ndarray:
         np.ndarray: D[n, q] = <r, c|_{s=q}> para cada símbolo n, de forma (N, 2^SF).
     """
 
-    # Validar el largo del array
-    assert r.size % p.M == 0, "El número de muestras debe ser múltiplo de 2**SF"
-
-    # Convertir r a un arreglo de forma (N, M): R[n, k] = r(nT_s + kT)
-    R = r.reshape(-1, p.M)
-
-    # Obtener d(nT_s + kT) = r(nT_s + kT) * downchirp
-    d = R * downchirp(p)
-
     # Transformada de Fourier (discreta) de cada fila (símbolo)
     # norm="ortho" normaliza la FFT para que la salida sea unitaria (conserve la energía de la
     # señal), equivalente a aplicar el factor 1/sqrt(M) de Ec. 16 a la salida de la FFT
-    return np.fft.fft(d, norm="ortho")
+    return np.fft.fft(dechirp(r, p), norm="ortho")
 
 
 def demodulator(r: np.ndarray, p: LoRaParams) -> np.ndarray:

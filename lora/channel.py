@@ -63,13 +63,14 @@ def noise_power(p: LoRaParams, SNR_dB: float) -> float:
     return power(preamble(p)) / 10 ** (SNR_dB / 10)
 
 
-def system(c: np.ndarray, h: np.ndarray, z: np.ndarray) -> np.ndarray:
+def system(c: np.ndarray, h: np.ndarray, z: np.ndarray | float) -> np.ndarray:
     """Simula la transmisión de la señal modulada a través de un canal ruidoso.
 
     Args:
         c (np.ndarray): Señal modulada (compleja) en el dominio del tiempo.
         h (np.ndarray): Respuesta al impulso del canal.
-        z (np.ndarray): Ruido blanco gaussiano aditivo (AWGN).
+        z (np.ndarray | float): Ruido blanco gaussiano aditivo (AWGN), o 0 para un canal sin
+            ruido.
 
     Returns:
         np.ndarray: Señal recibida después de pasar por el canal ruidoso.

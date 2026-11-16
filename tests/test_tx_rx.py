@@ -46,9 +46,9 @@ def test_downchirp():
 
 @pytest.mark.parametrize("s", [0, 1, 32, 80, 127])
 def test_dechirped_symbol_is_a_tone(s):
-    # El modulador por el down-chirp: un tono de frecuencia constante s B / M, en el bin s
+    # El modulador de-chirpeado: un tono de frecuencia constante s B / M, en el bin s
     k = np.arange(p.M)
-    d = tx.modulator(np.array([s]), p) * rx.downchirp(p)
+    d = rx.dechirp(tx.modulator(np.array([s]), p), p)[0]
     assert np.allclose(d, np.exp(2j * np.pi * s * k / p.M) / np.sqrt(p.M))
     D = np.abs(rx.dechirp_fft(tx.modulator(np.array([s]), p), p)[0]) ** 2
     assert np.isclose(D[s], 1) and np.allclose(np.delete(D, s), 0)
