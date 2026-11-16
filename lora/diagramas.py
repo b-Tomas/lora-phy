@@ -286,8 +286,126 @@ def deteccion() -> None:
     save_figure(fig, "deteccion")
 
 
+# --- 4. Filtro adaptado de la detección de trama ---------------------------------------------
+# Método 1 del notebook: correlación con el preámbulo completo (detection.detect_full)
+
+
+def _trama(ax, plantilla: bool, payload: bool) -> None:
+    """Trama en el tiempo: silencio, 8 up-chirps, 2.25 down-chirps y payload, con la cota de la
+    plantilla del filtro adaptado o la del desplazamiento hasta el payload."""
+    ax.set_xlim(-2.2, 21.5)
+    ax.set_ylim(-2.6, 2.4 if plantilla else 0.8)
+    ax.axis("off")
+
+    def bloque(x0, x1, texto, fc):
+        ax.add_patch(plt.Rectangle((x0, -0.5), x1 - x0, 1.0, fc=fc, ec="black", lw=1))
+        if texto:
+            ax.text((x0 + x1) / 2, 0, texto, ha="center", va="center", fontsize=11)
+
+    bloque(-2.0, 0, "silencio", "0.95")
+    for n in range(8):  # Up-chirps: frecuencia que sube
+        bloque(n, n + 1, "", "white")
+        ax.plot([n + 0.15, n + 0.85], [-0.3, 0.3], color="black", lw=1)
+    for n, ancho in enumerate([1, 1, 0.25]):  # 2.25 down-chirps: frecuencia que baja
+        x0 = 8 + n
+        bloque(x0, x0 + ancho, "", "0.88")
+        ax.plot([x0 + 0.15 * ancho, x0 + 0.85 * ancho], [0.3, -0.3], color="black", lw=1)
+    bloque(10.25, 21.0, "payload (10 símbolos)", "0.95")
+
+    def cota(x0, x1, y, texto, va):
+        ax.annotate(
+            "",
+            xy=(x1, y),
+            xytext=(x0, y),
+            arrowprops={"arrowstyle": "<->", "color": "black", "lw": 1.2},
+        )
+        for x in (x0, x1):
+            ax.plot([x, x], [y - 0.2, y + 0.2], color="black", lw=1)
+        dy = 0.25 if va == "bottom" else -0.25
+        ax.text((x0 + x1) / 2, y + dy, texto, ha="center", va=va, fontsize=11)
+
+    def marca(x, texto, fontsize):
+        ax.annotate(
+            texto,
+            xy=(x, -0.55),
+            xytext=(x, -2.35),
+            ha="center",
+            fontsize=fontsize,
+            arrowprops={"arrowstyle": "-|>", "color": "black", "lw": 1},
+        )
+
+    if plantilla:
+        cota(0, 8, 1.1, "plantilla $p$: 8 up-chirps ($8 \\cdot 2^{SF}$ muestras)", "bottom")
+    marca(0, "$\\hat{k}$", 12)
+    if payload:
+        cota(
+            0, 10.25, -1.25, "$10.25 \\cdot 2^{SF}$ muestras: 8 up-chirps + 2.25 down-chirps", "top"
+        )
+        marca(10.25, "inicio del payload", 11)
+
+
+def filtro_adaptado() -> None:
+    # El detector, desde la señal recibida hasta el inicio estimado de la trama
+    L = 2.6
+    d = schemdraw.Drawing(show=False)
+    d.config(fontsize=FONT, bgcolor="white")
+    a = d.add(dsp.Arrow().right().length(L).label("$r[k]$", "top"))
+    mf = d.add(
+        dsp.Box(w=3.6, h=1.6)
+        .at(a.end)
+        .anchor("W")
+        .label("Filtro adaptado\nplantilla $p$:\n8 up-chirps")
+    )
+    a = d.add(dsp.Arrow().at(mf.E).right().length(L).label("$\\langle r_k, p \\rangle$", "top"))
+    mod = d.add(dsp.Box(w=1.8, h=BOX_H).at(a.end).anchor("W").label("$|\\cdot|^2$"))
+    a = d.add(dsp.Arrow().at(mod.E).right().length(L).label("$T[k]$", "top"))
+    cmp_ = d.add(dsp.Box(w=2.4, h=BOX_H).at(a.end).anchor("W").label("$T[k] \\geq \\eta$"))
+    eta = d.add(dsp.Arrow().endpoints((cmp_.S[0], cmp_.S[1] - 1.1), cmp_.S))
+    d.add(
+        elm.Label()
+        .at((eta.start[0], eta.start[1] - 0.5))
+        .label("$\\eta = -8\\sigma^2 \\ln(P_{FA} / 2^{SF})$")
+    )
+    a = d.add(dsp.Arrow().at(cmp_.E).right().length(L).label("primer\ncruce", "top"))
+    mx = d.add(
+        dsp.Box(w=3.6, h=1.6)
+        .at(a.end)
+        .anchor("W")
+        .label("Máximo de $T$ en\nlos $8 \\cdot 2^{SF}$\nsiguientes")
+    )
+    d.add(dsp.Arrow().at(mx.E).right().length(L).label("$\\hat{k}$", "top"))
+    save_drawing(d, "filtro_adaptado")
+
+    # La plantilla sobre la trama, alineada en el inicio estimado
+    fig, ax = plt.subplots(figsize=(13, 2.9))
+    _trama(ax, plantilla=True, payload=False)
+    fig.tight_layout()
+    save_figure(fig, "filtro_adaptado_trama")
+
+
+def inicio_payload() -> None:
+    # Del inicio de la trama al inicio del payload
+    L = 2.6
+    d = schemdraw.Drawing(show=False)
+    d.config(fontsize=FONT, bgcolor="white")
+    a = d.add(dsp.Arrow().right().length(L).label("$\\hat{k}$", "top"))
+    off = d.add(dsp.Box(w=3.0, h=BOX_H).at(a.end).anchor("W").label("$+\\,10.25 \\cdot 2^{SF}$"))
+    a = d.add(dsp.Arrow().at(off.E).right().length(L + 0.6).label("inicio del\npayload", "top"))
+    dem = d.add(dsp.Box(w=3.0, h=BOX_H).at(a.end).anchor("W").label("Demodulador"))
+    d.add(dsp.Arrow().at(dem.E).right().length(L).label("$\\hat{s}(nT_s)$", "top"))
+    save_drawing(d, "inicio_payload")
+
+    # El desplazamiento sobre la trama
+    fig, ax = plt.subplots(figsize=(13, 2.9))
+    _trama(ax, plantilla=False, payload=True)
+    fig.tight_layout()
+    save_figure(fig, "inicio_payload_trama")
+
+
 if __name__ == "__main__":
     sistema()
     canal()
     deteccion()
+    filtro_adaptado()
+    inicio_payload()
     print("Diagramas generados en", OUT)
