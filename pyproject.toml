@@ -13,6 +13,8 @@ dependencies = ["numpy", "matplotlib"]
 dev = ["jupyter", "pytest", "ruff"]
 # 1.x es para la API de libiio 1.x; el lab usa libiio 0.26
 sdr = ["pyadi-iio", "pylibiio>=0.25,<1"]
+# Diagramas orientativos del notebook: python -m lora.diagramas
+diagramas = ["schemdraw"]
 
 [tool.setuptools]
 packages = ["lora"]
