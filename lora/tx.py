@@ -91,34 +91,6 @@ def modulator(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
     return (np.exp(1j * 2 * np.pi * phase) / np.sqrt(p.M)).ravel()
 
 
-def paper_modulator(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
-    """Forma de onda de Ec. 2 tal como está escrita en el paper.
-
-    La frecuencia de Ec. 2 multiplica a kT, así que su fase crece con k^2 y la frecuencia real barre
-    de f_0 a f_0 + 2B por símbolo, el doble que `modulator`. Muestreada a B, se repliega. Solo se
-    usa para compararla con `modulator`.
-
-    Args:
-        symbols (np.ndarray): Conjunto de símbolos $s(nT_s)$. 0 <= s < 2**SF.
-        p (LoRaParams): Parámetros del sistema.
-        L (int): Puntos por chip. Con L > 1 evalúa Ec. 2 también entre muestras, para graficar.
-
-    Returns:
-        np.ndarray: Señal modulada (compleja) en el dominio del tiempo.
-    """
-
-    # Frecuencia del exponente de Ec. 2: f(k) = (s + k) mod M * B / M. Forma (N, M)
-    f = instantaneous_frequency(symbols, p, L).reshape(-1, p.M * L)
-
-    # Vector de chips k = 0..M-1, con L puntos por chip
-    k = np.arange(p.M * L) / L
-
-    # Ec. 2: f(k) multiplicada por kT. Forma (N, M)
-    c = np.exp(1j * 2 * np.pi * f * k * p.T) / np.sqrt(p.M)
-
-    return c.ravel()  # Aplanar a un vector unidimensional de chips
-
-
 def preamble(p: LoRaParams) -> np.ndarray:
     """Genera el preámbulo de una trama LoRa.
 

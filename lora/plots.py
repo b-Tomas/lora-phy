@@ -310,7 +310,7 @@ def ber_vs_snr(SNRs_dB: np.ndarray, bers: dict[str, np.ndarray]) -> Figure:
     """
 
     fig, ax = plt.subplots()
-    for (label, ber), marker in zip(bers.items(), ["s", "o", "^", "d"]):
+    for (label, ber), marker in zip(bers.items(), ["s", "o", "^", "d", "v"]):
         ax.semilogy(SNRs_dB, ber, marker=marker, label=label)
     ax.set(title="BER vs SNR", xlabel="SNR (dB)", ylabel="BER")
     ax.grid(True, which="both")

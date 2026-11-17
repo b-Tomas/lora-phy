@@ -25,7 +25,14 @@ from .tx import encoder, modulator, preamble
 # --- BER -------------------------------------------------------------------------------------
 
 
-def transmission_ber(p: LoRaParams, SNR_dB: float, h: np.ndarray, num_symbols: int = 100) -> float:
+def transmission_ber(
+    p: LoRaParams,
+    SNR_dB: float,
+    h: np.ndarray,
+    num_symbols: int = 100,
+    modulate=modulator,
+    demodulate=demodulator,
+) -> float:
     """Simula la transmisión de bits aleatorios a través de un canal ruidoso y calcula el BER.
 
     Args:
@@ -33,6 +40,7 @@ def transmission_ber(p: LoRaParams, SNR_dB: float, h: np.ndarray, num_symbols: i
         SNR_dB (float): Relación señal-ruido en decibelios.
         h (np.ndarray): Respuesta al impulso del canal.
         num_symbols (int): Símbolos transmitidos.
+        modulate, demodulate: Modulador y demodulador (los del Anexo C usan Ec. 2).
 
     Returns:
         float: Bit Error Rate (BER) de la transmisión simulada.
@@ -42,18 +50,24 @@ def transmission_ber(p: LoRaParams, SNR_dB: float, h: np.ndarray, num_symbols: i
     bits_tx = params.rng.integers(0, 2, size=p.SF * num_symbols)
 
     # Transmisión completa
-    c = modulator(encoder(bits_tx, p), p)  # Señal modulada
+    c = modulate(encoder(bits_tx, p), p)  # Señal modulada
     z = noise_from_SNR(c, SNR_dB)  # Ruido generado a partir de la señal y el SNR
     r = system(c, h, z)  # Señal recibida después del canal ruidoso
 
     # Demodulación y decodificación
-    bits_rx = decoder(demodulator(r, p), p)
+    bits_rx = decoder(demodulate(r, p), p)
 
     return BER(bits_tx, bits_rx)
 
 
 def ber_vs_snr(
-    p: LoRaParams, SNRs_dB: np.ndarray, h: np.ndarray, simulations: int, num_symbols: int = 100
+    p: LoRaParams,
+    SNRs_dB: np.ndarray,
+    h: np.ndarray,
+    simulations: int,
+    num_symbols: int = 100,
+    modulate=modulator,
+    demodulate=demodulator,
 ) -> np.ndarray:
     """BER promedio de `simulations` transmisiones para cada SNR.
 
@@ -63,6 +77,7 @@ def ber_vs_snr(
         h (np.ndarray): Respuesta al impulso del canal.
         simulations (int): Transmisiones simuladas por SNR.
         num_symbols (int): Símbolos por transmisión.
+        modulate, demodulate: Como en `transmission_ber`.
 
     Returns:
         np.ndarray: BER para cada SNR.
@@ -70,7 +85,12 @@ def ber_vs_snr(
 
     return np.array(
         [
-            np.mean([transmission_ber(p, SNR_dB, h, num_symbols) for _ in range(simulations)])
+            np.mean(
+                [
+                    transmission_ber(p, SNR_dB, h, num_symbols, modulate, demodulate)
+                    for _ in range(simulations)
+                ]
+            )
             for SNR_dB in SNRs_dB
         ]
     )

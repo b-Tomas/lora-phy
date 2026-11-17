@@ -17,7 +17,7 @@ sdr = ["pyadi-iio", "pylibiio>=0.25,<1"]
 diagramas = ["schemdraw"]
 
 [tool.setuptools]
-packages = ["lora"]
+packages = ["lora", "lora.anexos"]
 
 [tool.pyright]
 typeCheckingMode = "standard"

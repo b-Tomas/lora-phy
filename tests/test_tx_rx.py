@@ -65,15 +65,9 @@ def test_modulator():
     symbols = np.array([0, 32, 80])
     k = np.tile(np.arange(p.M), 3)
     s = np.repeat(symbols, p.M)
-    # En las muestras: Ec. 2 con k/2 en lugar de k
     expected = np.exp(2j * np.pi * (s + k / 2) * k / p.M) / np.sqrt(p.M)
     assert np.allclose(tx.modulator(symbols, p), expected)
     assert np.allclose(tx.modulator(symbols, p, 8)[::8], expected)
-    # Ec. 2 tal como está escrita
-    assert np.allclose(
-        tx.paper_modulator(symbols, p), np.exp(2j * np.pi * (s + k) * k / p.M) / np.sqrt(p.M)
-    )
-    assert np.allclose(tx.paper_modulator(symbols, p, 8)[::8], tx.paper_modulator(symbols, p))
 
 
 @pytest.mark.parametrize("n_downchirps", [0, 1, 2.25, 2.3])
