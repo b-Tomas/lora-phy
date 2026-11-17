@@ -430,6 +430,80 @@ def _detection_marks(ax: Axes, real: int, start: int | None) -> None:
         ax.axvline(start, color="r", ls=":", label="Inicio detectado")
 
 
+def neyman_pearson(
+    t: np.ndarray,
+    f0: np.ndarray,
+    f1: np.ndarray,
+    P_FA_t: np.ndarray,
+    P_D_t: np.ndarray,
+    etas: dict[str, float],
+    operating: str,
+    p: LoRaParams,
+    SNR_dB: float,
+) -> Figure:
+    """Densidades de T[k] con varios umbrales y la curva ROC que recorre todos.
+
+    Recibe los resultados de `detection.preamble_correlation_distributions`. Las áreas de P_FA y
+    P_D se sombrean para el umbral `operating`, que en la ROC se marca con una estrella.
+
+    Args:
+        t (np.ndarray): Valores de T[k].
+        f0 (np.ndarray): Densidad bajo H0.
+        f1 (np.ndarray): Densidad bajo H1.
+        P_FA_t (np.ndarray): P_FA por muestra de cada umbral t.
+        P_D_t (np.ndarray): P_D de cada umbral t.
+        etas (dict[str, float]): Umbrales a marcar, por nombre.
+        operating (str): Nombre del umbral de operación.
+        p (LoRaParams): Parámetros del sistema.
+        SNR_dB (float): SNR de las densidades.
+
+    Returns:
+        Figure: Figura con las densidades y la ROC.
+    """
+
+    fig, (ax_pdf, ax_roc) = plt.subplots(1, 2, figsize=(13, 4.5))
+    floor = 1e-11  # Base del sombreado en el eje logarítmico
+    ax_pdf.semilogy(t, f0, color="C7", label="$H_0$ (solo ruido)")
+    ax_pdf.semilogy(t, f1, color="C0", label="$H_1$ (preámbulo alineado)")
+    tail = t >= etas[operating]
+    ax_pdf.fill_between(
+        t[tail], f0[tail], floor, color="C3", alpha=0.4, label="$P_{FA}$ por muestra"
+    )
+    ax_pdf.fill_between(t[tail], f1[tail], floor, color="C0", alpha=0.2, label="$P_D$")
+    # Valor de cada área: en el eje logarítmico su tamaño no se aprecia
+    eta = etas[operating]
+    ax_pdf.text(eta + 28, 100 * floor, f"$P_{{FA}}$ = {np.interp(eta, t, P_FA_t):.1e}", color="C3")
+    ax_pdf.text(eta + 25, 1e-4, f"$P_D$ = {np.interp(eta, t, P_D_t):.2f}", color="C0")
+
+    # En la ROC, la P_FA por símbolo: 2^SF muestras por símbolo
+    P_FA_symbol = np.minimum(p.M * P_FA_t, 1)
+    ax_roc.semilogx(P_FA_symbol, P_D_t, color="C0")
+    for (name, eta), color in zip(etas.items(), ("C1", "k", "C2")):
+        ax_pdf.axvline(eta, color=color, ls="--", lw=1.5, label=f"η: {name}")
+        marker = "*" if name == operating else "o"
+        point = (np.interp(eta, t, P_FA_symbol), np.interp(eta, t, P_D_t))
+        ax_roc.semilogx(*point, marker, color=color, ms=14 if marker == "*" else 8, mec="k")
+
+    ax_pdf.set(
+        title=f"Densidades de $T[k]$ (SNR={SNR_dB:g} dB)",
+        xlabel="$T[k]$",
+        ylabel="Densidad",
+        xlim=(t[0], t[-1]),
+        ylim=(floor, 2 * f0.max()),
+    )
+    ax_pdf.legend(loc="upper right", fontsize=8)
+    ax_roc.set(
+        title="Curva ROC de $T[k]$",
+        xlabel="$P_{FA}$ por símbolo",
+        ylabel="$P_D$",
+        xlim=(1e-7, 1),
+        ylim=(-0.02, 1.02),
+    )
+    ax_roc.grid(True, which="both", alpha=0.3)
+    fig.tight_layout()
+    return fig
+
+
 def full_preamble_detection(
     T: np.ndarray,
     eta: float,

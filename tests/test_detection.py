@@ -101,6 +101,18 @@ def test_detectors_other_params(q, detect):
     assert start == gap * q.M or tie
 
 
+def test_preamble_correlation_distributions(p):
+    # Las colas teóricas coinciden con T[k] simulado bajo cada hipótesis
+    npw, n = 0.4, 20_000
+    m = p.n_upchirps * npw
+    t = np.linspace(0, 40 * m, 4001)
+    _, _, P_FA, P_D = detection.preamble_correlation_distributions(t, npw, p)
+    noise = np.sqrt(m / 2) * (rng.normal(size=n) + 1j * rng.normal(size=n))
+    for tail, T in ((P_FA, np.abs(noise) ** 2), (P_D, np.abs(p.n_upchirps + noise) ** 2)):
+        for eta in (10 * m, 20 * m):
+            assert np.isclose(np.interp(eta, t, tail), np.mean(T > eta), atol=0.01)
+
+
 def test_roc():
     # Estadísticos separados dan un detector perfecto (pasa por el punto (0, 1))
     P_FA, P_D = metrics.roc(np.array([0.0, 1.0]), np.array([2.0, 3.0]))

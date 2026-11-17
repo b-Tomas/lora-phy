@@ -41,6 +41,14 @@ def test_every_plot_returns_a_figure():
         plots.ber_vs_snr(snrs, {"Canal plano": rate}),
         plots.frame_structure(payload, gap, p),
         plots.upchirp_correlation(y_clean, y, gap, p, SNR_dB),
+        plots.neyman_pearson(
+            np.linspace(0, 10, 101),
+            *detection.preamble_correlation_distributions(np.linspace(0, 10, 101), npw, p),
+            {"a": 2.0, "b": 3.0},
+            "b",
+            p,
+            SNR_dB,
+        ),
         plots.full_preamble_detection(
             T,
             detection.threshold("full", p, npw, P_FA),

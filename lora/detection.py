@@ -146,6 +146,38 @@ def time_threshold(noise_power: float, P_FA: float, p: LoRaParams) -> float:
     return -p.n_upchirps * noise_power * np.log(P_FA)
 
 
+def preamble_correlation_distributions(
+    t: np.ndarray, noise_power: float, p: LoRaParams
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Densidades y colas de T[k] bajo H0 y H1, con la plantilla alineada en el canal plano.
+
+    Con m = n_upchirps * noise_power, bajo H0 <r_k, p> es gaussiana compleja de varianza m y T[k]
+    es exponencial de media m. Bajo H1 se le suma la señal, de módulo A = n_upchirps (los chirps
+    de energía 1 sumados en fase), y |<r_k, p>| tiene distribución de Rice:
+    f(t) = e^{-(t + A^2)/m} I0(2 A sqrt(t) / m) / m.
+
+    Args:
+        t (np.ndarray): Valores de T[k], equiespaciados desde 0 y hasta donde la densidad bajo
+            H1 es despreciable.
+        noise_power (float): Potencia del ruido por muestra (sigma^2).
+        p (LoRaParams): Parámetros del sistema.
+
+    Returns:
+        tuple: Densidades bajo H0 y H1, y sus colas P(T[k] > t): la P_FA y la P_D por muestra
+            de cada umbral t.
+    """
+
+    m = p.n_upchirps * noise_power
+    A = p.n_upchirps
+    f0 = np.exp(-t / m) / m
+    # ponytail: np.i0 desborda con argumentos > ~700 (SNR altos); alcanza para el rango de la ROC
+    f1 = np.exp(-(t + A**2) / m) * np.i0(2 * A * np.sqrt(t) / m) / m
+    # Cola de H1 por integración trapezoidal desde el final de t
+    dt = t[1] - t[0]
+    P_D = np.append(np.cumsum(((f1[1:] + f1[:-1]) * dt / 2)[::-1])[::-1], 0.0)
+    return f0, f1, np.exp(-t / m), P_D
+
+
 def detect_full(r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float) -> int | None:
     """Detecta la muestra de inicio de la trama con la correlación con el preámbulo completo.
 
