@@ -1,54 +1,58 @@
 import numpy as np
+import pytest
 
 from lora import channel, detection, seed, simulation
 
 
+def test_count_errors_runs_min_then_until_errors():
+    # Hace el mínimo aunque ya tenga los errores, y después sigue hasta juntarlos
+    calls = []
+
+    def trial(e):
+        calls.append(1)
+        return e, 1
+
+    assert simulation._count_errors(lambda: trial(1), 10, 1000, 5) == (10, 10)
+    calls.clear()
+    assert simulation._count_errors(lambda: trial(int(len(calls) % 4 == 0)), 3, 1000, 5) == (5, 17)
+
+
+def test_count_errors_stops_at_max():
+    assert simulation._count_errors(lambda: (0, 7), 2, 50, 100) == (0, 350)
+
+
 def test_fer_noiseless(p):
     # Sin ruido el detector encuentra el inicio exacto de todas las tramas
-    fer = simulation.fer_vs_snr(
-        detection.detect_full,
-        np.array([100.0]),
-        channel.FLAT,
-        p,
-        1e-3,
-        3,
-        num_symbols=4,
-        gap=3,
-        min_errors=1,
-    )
-    assert fer[0] == 0
+    curves = {"full": {"detect": detection.detect_full, "h": channel.FLAT}}
+    fer = simulation.fer_vs_snr(np.array([100.0]), curves, p, 1e-3, 4, 3, 3, 3, min_errors=1)
+    er = fer["full"]
+    assert er.rate[0] == 0 and er.trials[0] == 3 and not er.reliable[0]
 
 
-def test_fer_min_errors(p, monkeypatch):
-    # Sin señal útil se pierden todas las tramas: corta a los 5 errores, no a las 1000 tramas
-    frames = []
-    transmit = simulation.transmit_frame
-    monkeypatch.setattr(simulation, "transmit_frame", lambda *a: frames.append(1) or transmit(*a))
-    fer = simulation.fer_at_snr(
-        detection.detect_full,
-        -60.0,
-        channel.FLAT,
-        p,
-        1e-3,
-        1000,
-        num_symbols=4,
-        gap=3,
-        min_errors=5,
-    )
-    assert len(frames) == 5 and fer == 1
+def test_fer_without_signal(p):
+    # Sin señal útil se pierden todas las tramas: el mínimo alcanza para juntar los errores
+    curves = {"full": {"detect": detection.detect_full, "h": channel.FLAT}}
+    er = simulation.fer_vs_snr(np.array([-60.0]), curves, p, 1e-3, 4, 3, 5, 1000, min_errors=5)
+    assert er["full"].trials[0] == 5 and er["full"].rate[0] == 1 and er["full"].reliable[0]
 
 
 def test_fer_vs_snr_reproducible(p):
     # Con la misma semilla, la corrida en paralelo da el mismo FER
-    args = (detection.detect_full, np.array([-14.0, -12.0]), channel.FLAT, p, 1e-3, 20)
+    curves = {
+        m: {"detect": d, "h": channel.FLAT}
+        for m, d in (("full", detection.detect_full), ("freq", detection.detect_freq))
+    }
+    args = (np.array([-14.0, -12.0]), curves, p, 1e-3, 4, 3, 5, 20)
     seed(0)
-    fer = simulation.fer_vs_snr(*args, num_symbols=4, gap=3, min_errors=20)
+    fer = simulation.fer_vs_snr(*args, min_errors=20)
     seed(0)
-    assert np.array_equal(fer, simulation.fer_vs_snr(*args, num_symbols=4, gap=3, min_errors=20))
+    again = simulation.fer_vs_snr(*args, min_errors=20)
+    assert all(np.array_equal(fer[m].errors, again[m].errors) for m in curves)
 
 
 def test_ber_vs_snr_noiseless(p):
-    assert np.all(simulation.ber_vs_snr(p, np.array([100.0]), channel.FLAT, 2) == 0)
+    ber = simulation.ber_vs_snr(p, np.array([100.0]), {"plano": {"h": channel.FLAT}}, 2, 4)
+    assert np.all(ber["plano"].rate == 0) and ber["plano"].trials[0] == 4 * 7 * 100
 
 
 def test_roc_curves_shape(p):
@@ -66,3 +70,12 @@ def test_measured_false_alarms(p):
     for method in ("full", "peaks"):
         target, measured = res[method]
         assert np.allclose(measured, target, rtol=0.2)
+
+
+def test_interval_contains_rate():
+    er = simulation.ErrorRate(np.array([0, 5, 100, 300]), np.array([1000, 1000, 1000, 300]))
+    lo, hi = er.interval()
+    eps = 1e-12  # Redondeo en los extremos
+    assert np.all((lo <= er.rate + eps) & (er.rate <= hi + eps) & (lo >= 0) & (hi <= 1))
+    # Con 100 errores el intervalo es de aproximadamente ±20 %
+    assert hi[2] / er.rate[2] == pytest.approx(1.2, abs=0.03)

@@ -11,7 +11,6 @@ muestreada a B, se repliega: recorre la banda dos veces.
 
 import numpy as np
 
-from .. import simulation
 from ..params import LoRaParams
 
 
@@ -50,11 +49,3 @@ def demodulator(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     k = np.arange(p.M)
     d = r.reshape(-1, p.M) * np.exp(-1j * 2 * np.pi * k**2 / p.M)
     return np.argmax(np.abs(np.fft.fft(d)) ** 2, axis=1)
-
-
-def ber_vs_snr(p: LoRaParams, SNRs_dB: np.ndarray, h: np.ndarray, simulations: int) -> np.ndarray:
-    """`simulation.ber_vs_snr` con el modulador y el demodulador de Ec. 2."""
-
-    return simulation.ber_vs_snr(
-        p, SNRs_dB, h, simulations, modulate=modulator, demodulate=demodulator
-    )

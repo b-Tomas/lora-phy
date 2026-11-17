@@ -32,9 +32,10 @@ def test_mismatch_fails():
 
 
 @pytest.mark.parametrize("h", [channel.FLAT, channel.FREQ_SELECTIVE])
-def test_same_ber_without_noise(h):
-    ber = vangelista.ber_vs_snr(p, np.array([100.0]), h, 2)
-    assert np.array_equal(ber, simulation.ber_vs_snr(p, np.array([100.0]), h, 2))
+def test_no_bit_errors_without_noise(h):
+    # Sin ruido el sistema de Ec. 2 no comete errores, como el de LoRa
+    errors, _ = simulation.bit_errors(p, 100.0, h, vangelista.modulator, vangelista.demodulator)
+    assert errors == 0
 
 
 def test_chirp_comparison():

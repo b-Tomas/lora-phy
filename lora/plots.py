@@ -15,7 +15,7 @@ from .channel import FLAT
 from .params import LoRaParams
 from .rx import dechirp, dechirp_fft
 from .sdr import ADC_FULL_SCALE
-from .simulation import RocCurves
+from .simulation import ErrorRate, RocCurves
 from .tx import instantaneous_frequency, modulator
 
 # Nombre y color de cada método de detección, por clave de método
@@ -24,6 +24,43 @@ _METHODS = {
     "peaks": ("Tiempo (8 impulsos)", "C2"),
     "freq": ("Frecuencia (demodulación)", "C1"),
 }
+
+
+def _error_rate(ax: Axes, SNRs_dB: np.ndarray, er: ErrorRate, marker: str = "o", **style) -> None:
+    """Curva de una tasa de error, con el intervalo de confianza del 95 % de cada punto. Los
+    puntos que no juntaron `er.min_errors` errores se dibujan huecos y transparentes: su
+    estimación es menos confiable.
+
+    Args:
+        ax (Axes): Gráfico.
+        SNRs_dB (np.ndarray): SNR de cada punto, en decibelios.
+        er (ErrorRate): Tasa de error de cada SNR.
+        marker (str): Marcador de los puntos.
+        **style: Estilo de la línea (color, label, ms...).
+    """
+
+    SNRs_dB = np.asarray(SNRs_dB)
+    label = style.pop("label", None)
+    (line,) = ax.plot(SNRs_dB, er.rate, **style)
+    style = {"color": line.get_color(), "ms": style.get("ms")}
+    # Entrada de la leyenda con la línea y el marcador: sin línea (ls="none") quedaría vacía
+    ax.plot([], [], marker, ls=line.get_linestyle(), label=label, **style)
+    lo, hi = er.interval()
+    drawn = er.rate > 0  # Los puntos sin errores no entran en la escala logarítmica
+    ax.vlines(SNRs_dB[drawn], lo[drawn], hi[drawn], color=line.get_color(), lw=1)
+    ok = er.reliable
+    ax.plot(SNRs_dB[ok], er.rate[ok], marker, ls="none", **style)
+    ax.plot(SNRs_dB[~ok], er.rate[~ok], marker, ls="none", mfc="none", alpha=0.4, **style)
+
+
+def _few_errors_legend(ax: Axes, rates: list[ErrorRate]) -> None:
+    """Agrega a la leyenda el marcador de los puntos con pocos errores, si hay alguno."""
+
+    few = [er for er in rates if not np.all(er.reliable)]
+    if few:
+        label = f"Menos de {few[0].min_errors} errores"
+        ax.plot([], [], "o", color="gray", mfc="none", alpha=0.4, label=label)
+
 
 # Muestras por ventana de la FFT de los espectrogramas
 _NFFT = 16
@@ -278,12 +315,13 @@ def dechirp_steps(
     return fig
 
 
-def ber_vs_snr(SNRs_dB: np.ndarray, bers: dict[str, np.ndarray]) -> Figure:
-    """BER vs SNR, una curva por canal.
+def ber_vs_snr(SNRs_dB: np.ndarray, bers: dict[str, ErrorRate]) -> Figure:
+    """BER vs SNR, una curva por canal (`simulation.ber_vs_snr`). Los puntos sin errores no se
+    dibujan, y los que tienen pocos errores van huecos.
 
     Args:
         SNRs_dB (np.ndarray): SNR simulados, en decibelios.
-        bers (dict[str, np.ndarray]): BER de cada curva, por etiqueta.
+        bers (dict[str, ErrorRate]): BER de cada curva, por etiqueta.
 
     Returns:
         Figure: Figura con las curvas.
@@ -291,7 +329,9 @@ def ber_vs_snr(SNRs_dB: np.ndarray, bers: dict[str, np.ndarray]) -> Figure:
 
     fig, ax = plt.subplots(figsize=(10, 4.5))
     for (label, ber), marker in zip(bers.items(), ["s", "o", "^", "d", "v"]):
-        ax.semilogy(SNRs_dB, ber, marker=marker, label=label)
+        _error_rate(ax, SNRs_dB, ber, marker, label=label)
+    _few_errors_legend(ax, list(bers.values()))
+    ax.set_yscale("log", nonpositive="mask")
     ax.set(title="BER vs SNR", xlabel="SNR (dB)", ylabel="BER")
     ax.grid(True, which="both")
     ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1))  # Afuera, para no tapar las curvas
@@ -541,16 +581,16 @@ def freq_detection(
 
 
 def compare_methods(
-    SNRs_dB: np.ndarray, flat: dict[str, np.ndarray], sel: dict[str, np.ndarray]
+    SNRs_dB: np.ndarray, flat: dict[str, ErrorRate], sel: dict[str, ErrorRate]
 ) -> Figure:
     """FER de los métodos vs SNR, un gráfico por canal, con eje y logarítmico (los puntos en 0 no
-    se dibujan).
+    se dibujan, y los que tienen pocos errores van huecos).
 
     Args:
         SNRs_dB (np.ndarray): SNR simulados, en decibelios.
-        flat (dict[str, np.ndarray]): FER de cada método en el canal plano, por clave de método
+        flat (dict[str, ErrorRate]): FER de cada método en el canal plano, por clave de método
             ("full", "peaks" o "freq").
-        sel (dict[str, np.ndarray]): FER de cada método en el canal selectivo.
+        sel (dict[str, ErrorRate]): FER de cada método en el canal selectivo.
 
     Returns:
         Figure: Figura con los dos gráficos.
@@ -560,11 +600,12 @@ def compare_methods(
     for ax, metric, channel in zip(axs, (flat, sel), ("Canal plano", "Canal selectivo")):
         for method, values in metric.items():
             name, color = _METHODS[method]
-            ax.plot(SNRs_dB, values, color=color, marker="o", label=name)
+            _error_rate(ax, SNRs_dB, values, color=color, label=name)
         ax.set_yscale("log", nonpositive="mask")
         ax.set(title=channel, xlabel="SNR (dB)")
         ax.grid(True, which="both", alpha=0.5)
     axs[0].set_ylabel("FER")
+    _few_errors_legend(axs[0], [*flat.values(), *sel.values()])
     axs[0].legend()
     fig.suptitle("FER vs SNR")
     fig.tight_layout()
@@ -725,23 +766,16 @@ def snr_vs_atten(attens_dB: np.ndarray, snr_dB: np.ndarray, fer_range_dB: np.nda
     return fig
 
 
-def fer_sdr(
-    SNRs_sim_dB: np.ndarray,
-    fer_sim: np.ndarray,
-    snr: np.ndarray,
-    fer: np.ndarray,
-    n_frames: int,
-) -> Figure:
-    """FER medido con el SDR sobre la curva simulada en canal plano. Los puntos sin errores no
-    entran en la escala logarítmica: se dibujan en 1 / n_frames, el menor FER que se puede medir,
-    como cota superior.
+def fer_sdr(SNRs_sim_dB: np.ndarray, fer_sim: ErrorRate, snr: np.ndarray, fer: ErrorRate) -> Figure:
+    """FER medido con el SDR sobre la curva simulada en canal plano, los dos con su intervalo de
+    confianza. Los puntos medidos sin errores no entran en la escala logarítmica: se dibujan en
+    1 / tramas medidas, el menor FER que se puede medir, como cota superior.
 
     Args:
         SNRs_sim_dB (np.ndarray): SNR de la simulación, en dB.
-        fer_sim (np.ndarray): FER simulado para cada SNR.
+        fer_sim (ErrorRate): FER simulado para cada SNR (`simulation.fer_vs_snr`).
         snr (np.ndarray): SNR medido de cada punto del SDR, en dB.
-        fer (np.ndarray): FER medido de cada punto del SDR.
-        n_frames (int): Tramas medidas por punto.
+        fer (ErrorRate): FER medido de cada punto del SDR.
 
     Returns:
         Figure: Figura del FER.
@@ -749,17 +783,19 @@ def fer_sdr(
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
     # Un punto por SNR simulado, para distinguirlos de los tramos interpolados
-    ax.plot(SNRs_sim_dB, fer_sim, "o-", ms=3, label="Simulación (canal plano)")
-    ax.plot(snr[fer > 0], fer[fer > 0], "o", color="C1", label="SDR")
-    if np.any(fer == 0):
+    _error_rate(ax, SNRs_sim_dB, fer_sim, ms=3, label="Simulación (canal plano)")
+    _error_rate(ax, snr, fer, ls="none", color="C1", label="SDR")
+    zero = fer.errors == 0
+    if np.any(zero):
         ax.plot(
-            snr[fer == 0],
-            np.full(np.sum(fer == 0), 1 / n_frames),
+            snr[zero],
+            1 / fer.trials[zero],
             "v",
             color="C1",
             mfc="none",
-            label=f"SDR, sin errores en {n_frames} tramas",
+            label=f"SDR, sin errores en {fer.trials[zero][0]} tramas",
         )
+    _few_errors_legend(ax, [fer_sim, fer])
     ax.set_yscale("log", nonpositive="mask")
     snrs = np.r_[SNRs_sim_dB, snr]
     ax.set_xlim(snrs.min() - 0.5, snrs.max() + 0.5)
