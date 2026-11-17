@@ -20,7 +20,7 @@ from . import params
 from .detection import detect_full
 from .metrics import power
 from .params import LoRaParams
-from .tx import MODULATION, modulator, preamble
+from .tx import modulator, preamble
 
 LO_FREQ = 905e6  # Portadora
 TX_ATTEN_DB = -10  # Atenuación del TX al conectar
@@ -488,37 +488,19 @@ def evaluate_all(captures: np.ndarray, meta: dict, p: LoRaParams, P_FA: float) -
 
 
 def acquire(
-    path: str, run: Callable, p: LoRaParams, uri: str | None, loopback: int = 0, lora: bool = True
+    path: str, run: Callable, p: LoRaParams, uri: str | None, loopback: int = 0
 ) -> tuple[np.ndarray, dict]:
     """Capturas de un paso del experimento y sus metadatos.
 
     Con `uri`, mide con el SDR (`run(pluto)` devuelve capturas y metadatos) y las guarda en `path`.
     Sin `uri`, carga las guardadas o, si no hay, mide con `SimulatedPluto` sin guardar.
-
-    Con `lora`, las capturas contienen tramas: se guardan con la modulación de `tx.modulator`
-    (`tx.MODULATION`), y una captura guardada con otra modulación no se carga, porque el receptor
-    la evaluaría con otra plantilla. Las capturas sin esa marca son de Ec. 2.
-
-    Raises:
-        ValueError: Si la captura guardada en `path` es de otra modulación.
     """
 
     if uri is not None:
         with session(uri, p, loopback) as pluto:
             captures, meta = run(pluto)
-        if lora:
-            meta = {**meta, "modulation": MODULATION}
         save(path, captures, **meta)
     elif not Path(path).exists():
         print(f"Sin {path}: Pluto simulado (canal plano, sin ruido ni distorsión del equipo)")
         return run(SimulatedPluto())
-
-    captures, meta = load(path)
-    if lora:
-        found = str(meta.pop("modulation", "Ec. 2"))
-        if found != MODULATION:
-            raise ValueError(
-                f"{path} se capturó con otra modulación ({found}) y el receptor usa "
-                f"{MODULATION}: medir de nuevo con el SDR (USE_SDR = True)"
-            )
-    return captures, meta
+    return load(path)

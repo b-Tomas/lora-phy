@@ -13,7 +13,7 @@ from matplotlib.ticker import MultipleLocator
 
 from .channel import FLAT
 from .params import LoRaParams
-from .rx import dechirp, dechirp_fft, downchirp
+from .rx import dechirp, dechirp_fft
 from .sdr import ADC_FULL_SCALE
 from .simulation import RocCurves
 from .tx import instantaneous_frequency, modulator
@@ -96,7 +96,7 @@ def _annotate_frame(ax: Axes, gap: int, p: LoRaParams, n_samples: int) -> None:
 
 
 def modulated_signal(
-    symbols: np.ndarray, p: LoRaParams, modulate=modulator, name: str = r"\tilde{c}", L: int = 8
+    symbols: np.ndarray, p: LoRaParams, modulate=modulator, name: str = "c", L: int = 8
 ) -> Figure:
     """Señal modulada en el tiempo: parte real y espectrograma.
 
@@ -106,7 +106,7 @@ def modulated_signal(
     Args:
         symbols (np.ndarray): Símbolos a modular.
         p (LoRaParams): Parámetros del sistema.
-        modulate: `tx.modulator` (fase integrada) o `tx.paper_modulator` (Ec. 2).
+        modulate: Modulador, como `tx.modulator`.
         name (str): Nombre de la señal en LaTeX, para los títulos.
         L (int): Puntos por chip de la parte real.
 
@@ -151,76 +151,6 @@ def _interpolate(x: np.ndarray, p: LoRaParams, L: int) -> np.ndarray:
     X_fine = np.zeros((X.shape[0], p.M * L), dtype=complex)
     X_fine[:, : p.M] = X  # Mismos bins de 0 a B, sin componentes nuevas
     return (np.fft.ifft(X_fine, axis=1) * L).ravel()
-
-
-def _sample_frequency(ax: Axes, x: np.ndarray, symbols: np.ndarray, p: LoRaParams) -> None:
-    """Frecuencia de `x` medida entre cada par de muestras consecutivas de un mismo símbolo (avance
-    de la fase por muestra), entre 0 y B, junto con la frecuencia inicial s B / 2^SF del símbolo."""
-
-    X = x.reshape(-1, p.M)
-    cycles = np.angle(X[:, 1:] * np.conj(X[:, :-1])) / (2 * np.pi)  # Avance por muestra, en ciclos
-    cycles[cycles < -1e-9] += 1  # De [-1/2, 1/2) a [0, 1): frecuencias entre 0 y B
-    f_kHz = np.clip(cycles, 0, None) * p.B / 1e3
-    for n, (f, s) in enumerate(zip(f_kHz, symbols)):
-        ax.plot(n * p.M + np.arange(1, p.M) - 0.5, f, "k.", ms=3)
-        ax.hlines(
-            s * p.B / p.M / 1e3,
-            n * p.M,
-            (n + 1) * p.M,
-            colors="C1",
-            ls="--",
-            lw=1,
-            label=r"$s\,B/2^{SF}$" if n == 0 else None,
-        )
-    ax.set(
-        title="Frecuencia de $d$ entre muestras consecutivas (avance de la fase por muestra)",
-        xlabel="Muestras",
-        ylabel="Frecuencia (kHz)",
-        ylim=(-0.05 * p.B / 1e3, 1.05 * p.B / 1e3),
-    )
-    _vlines(ax, np.arange(len(symbols) + 1) * p.M)
-    ax.legend(loc="upper left", fontsize="small")
-
-
-def demodulation_signals(symbols: np.ndarray, p: LoRaParams, L: int = 8) -> Figure:
-    """Señales del demodulador sin ruido: la señal modulada c~, el down-chirp que genera el
-    demodulador y su producto d(nT_s + kT), cada una con su parte real y su espectrograma. Para d
-    se agrega su frecuencia medida entre muestras consecutivas.
-
-    d solo existe en las muestras, porque el demodulador multiplica muestras. Su línea es la
-    interpolación de banda limitada de esas muestras, no el producto de c~ y el down-chirp entre
-    muestras.
-
-    Args:
-        symbols (np.ndarray): Símbolos a modular.
-        p (LoRaParams): Parámetros del sistema.
-        L (int): Puntos por chip de la parte real.
-
-    Returns:
-        Figure: Figura con siete gráficos.
-    """
-
-    n = len(symbols)
-    c, dc = modulator(symbols, p), downchirp(p, n)
-    d = c * dc
-
-    fig, axs = plt.subplots(7, 1, figsize=(10, 16))
-    _time_and_spectrogram(axs[0:2], c, modulator(symbols, p, L), r"\tilde{c}", p, L)
-    _time_and_spectrogram(
-        axs[2:4], dc, downchirp(p, n, L), r"e^{-j2\pi k^2/(2 \cdot 2^{SF})}", p, L
-    )
-    _time_and_spectrogram(
-        axs[4:6],
-        d,
-        _interpolate(d, p, L),
-        r"d = \tilde{c}\, e^{-j2\pi k^2/(2 \cdot 2^{SF})}",
-        p,
-        L,
-        "puntos: muestras, línea: interpolación de las muestras",
-    )
-    _sample_frequency(axs[6], d, symbols, p)
-    fig.tight_layout()
-    return fig
 
 
 def _periodogram(ax: Axes, P: np.ndarray, s: int, p: LoRaParams) -> int:
@@ -311,7 +241,7 @@ def dechirp_steps(
     r y d se grafican como en `modulated_signal`: la curva evalúa la señal sin ruido entre
     muestras, con L puntos por chip, y los puntos son las muestras recibidas. d solo existe en las
     muestras, porque el demodulador multiplica muestras, así que su curva es la interpolación de
-    banda limitada de sus muestras sin ruido (como en `demodulation_signals`).
+    banda limitada de sus muestras sin ruido.
 
     Args:
         r (np.ndarray): Un símbolo recibido, de 2^SF muestras.
@@ -403,7 +333,7 @@ def frame_structure(symbols_tx: np.ndarray, gap: int, p: LoRaParams) -> Figure:
         Figure: Figura con el gráfico.
     """
 
-    # Frecuencia instantánea sin ruido, con fines pedagógicos
+    # Frecuencia instantánea de la trama sin ruido
     k = np.arange(p.M)
     f_down = ((p.M - k) % p.M) * p.B / p.M  # Down-chirp: de B a 0
     n_down = p.preamble_len - p.n_upchirps * p.M  # Muestras de down-chirps
@@ -412,7 +342,7 @@ def frame_structure(symbols_tx: np.ndarray, gap: int, p: LoRaParams) -> Figure:
             np.full(gap * p.M, np.nan),  # Silencio: no hay señal
             instantaneous_frequency(np.zeros(p.n_upchirps, dtype=int), p),  # Up-chirps: de 0 a B
             np.resize(f_down, n_down),
-            instantaneous_frequency(symbols_tx, p),  # Ec. 2 para cada símbolo del payload
+            instantaneous_frequency(symbols_tx, p),  # Payload
         ]
     )
 
@@ -454,8 +384,7 @@ def upchirp_correlation(
     for ax in axs[:2]:
         _annotate_frame(ax, gap, p, n_samples)
 
-    # Detalle sin ruido del inicio del preámbulo: un impulso en cada borde de símbolo y otro en el
-    # medio
+    # Detalle sin ruido del inicio del preámbulo: un impulso en cada borde de símbolo
     axs[2].plot(np.abs(y_clean) ** 2, marker=".", color="green", lw=0.8)
     for n in range(4):
         axs[2].axvline((gap + n) * p.M, color="k", ls=":", lw=0.8)

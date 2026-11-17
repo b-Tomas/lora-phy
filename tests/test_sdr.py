@@ -1,5 +1,3 @@
-import contextlib
-
 import numpy as np
 import pytest
 
@@ -97,26 +95,6 @@ def test_snr_matches_simulation(SNR_dB):
     r = channel.transmit_frame(symbols, 5, p, SNR_dB, channel.FLAT)
     x = sdr.frames(symbols[None], np.array([5 * p.M]), p)
     assert sdr.snr_dB(r * 1e3 * np.exp(1j), x) == pytest.approx(SNR_dB, abs=0.3)
-
-
-def test_acquire_checks_modulation(tmp_path, monkeypatch):
-    # El Pluto simulado en lugar del SDR, para pasar por la rama que mide y guarda
-    monkeypatch.setattr(sdr, "session", lambda *_: contextlib.nullcontext(sdr.SimulatedPluto()))
-
-    def run(pluto):
-        symbols, gaps, r, _ = sdr.measure(pluto, p, 2, NUM_SYMBOLS, GAP, calibrate=False)
-        return r, {"symbols": symbols, "gaps": gaps}
-
-    path = tmp_path / "frames.npz"
-    measured, _ = sdr.acquire(path, run, p, "ip:simulado")
-    loaded, meta = sdr.acquire(path, run, p, None)  # Sin SDR: carga la guardada
-    assert np.array_equal(loaded, measured) and set(meta) == {"symbols", "gaps"}
-
-    # Captura sin la marca de la modulación (Ec. 2): no se evalúa como tramas
-    sdr.save(path, measured, **meta)
-    with pytest.raises(ValueError, match="otra modulación"):
-        sdr.acquire(path, run, p, None)
-    sdr.acquire(path, run, p, None, lora=False)  # Sin tramas, como el tono: se carga
 
 
 def test_save_load(tmp_path):

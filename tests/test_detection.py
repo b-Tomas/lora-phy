@@ -92,12 +92,13 @@ def test_short_signal_rejected(p, statistic, n_samples):
 )
 def test_detectors_other_params(q, detect):
     symbols = rng.integers(0, q.M, 4)
-    # Sin silencio: con silencio, la ventana de ruido anterior al preámbulo se decide como
-    # símbolo 0 con probabilidad 2^-SF y la detección en frecuencia empata con el inicio
-    gap = 0
+    gap = 2
     r = channel.transmit_frame(symbols, gap, q, 100, channel.FLAT)
     start = detect(r, q, channel.noise_power(q, 100), 1e-3)
-    assert start == gap * q.M
+    # En frecuencia, la ventana de ruido anterior al preámbulo se decide como símbolo 0 con
+    # probabilidad 2^-SF y V[m] empata con el inicio: se elige la primera ventana del empate
+    tie = detect is detection.detect_freq and start == (gap - 1) * q.M
+    assert start == gap * q.M or tie
 
 
 def test_roc():

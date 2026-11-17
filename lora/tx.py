@@ -4,10 +4,6 @@ import numpy as np
 
 from .params import LoRaParams
 
-# Modulación que genera `modulator`. Se guarda con las capturas del SDR, para no evaluar con este
-# receptor tramas transmitidas con otra modulación (las capturas sin esta marca son de Ec. 2)
-MODULATION = "fase integrada (Ec. 2 con k/2)"
-
 
 def encoder(bits: np.ndarray, p: LoRaParams) -> np.ndarray:
     """Convierte un conjunto de bits en símbolos.
@@ -44,8 +40,7 @@ def instantaneous_frequency(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> n
     """Frecuencia instantánea de la señal modulada.
 
     Para cada símbolo n y chip k: f(k) = ((s(nT_s) + k) mod 2^SF) B / 2^SF, una sola pasada de 0 a
-    B por símbolo. Es la frecuencia que se lee en el exponente de Ec. 2 y la frecuencia real de
-    `modulator`, cuya fase es su integral.
+    B por símbolo: el corchete de Ec. 2 y la frecuencia de `modulator`, cuya fase es su integral.
 
     Args:
         symbols (np.ndarray): Conjunto de símbolos $s(nT_s)$. 0 <= s < 2**SF.
@@ -66,15 +61,15 @@ def instantaneous_frequency(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> n
 
 
 def modulator(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
-    """Genera la forma de onda FSCM: un chirp por símbolo, con la fase igual a la integral de la
-    frecuencia de Ec. 2.
+    """Genera la forma de onda FSCM: el chirp de LoRa de cada símbolo.
 
     La frecuencia instantánea es ((s(nT_s) + k) mod 2^SF) B / 2^SF (`instantaneous_frequency`), una
-    sola pasada de 0 a B por símbolo. En las muestras vale
+    sola pasada de 0 a B por símbolo, y la fase es su integral. En las muestras vale
 
-        c~(nT_s + kT) = e^{j2π (s + k/2) k / 2^SF} / sqrt(2^SF),
+        c(nT_s + kT) = e^{j2π (s + k/2) k / 2^SF} / sqrt(2^SF).
 
-    es decir, Ec. 2 con k/2 en lugar de k. Muestrea a k = 0..2**SF-1 chips por cada símbolo n.
+    Ec. 2 multiplica la frecuencia por kT y omite el 1/2 del término cuadrático (Anexo C del
+    notebook). Muestrea a k = 0..2**SF-1 chips por cada símbolo n.
 
     Args:
         symbols (np.ndarray): Conjunto de símbolos $s(nT_s)$ a transmitir. 0 <= s < 2**SF.
@@ -92,7 +87,7 @@ def modulator(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
     # llega a B (el mod). En las muestras esa resta es un número entero de ciclos.
     phase = (s + k / 2) * k / p.M - np.maximum(k - (p.M - s), 0)
 
-    # c[n, k] = c~(nT_s + kT), de forma (N, M), aplanado a un vector unidimensional de chips
+    # c[n, k] = c(nT_s + kT), de forma (N, M), aplanado a un vector unidimensional de chips
     return (np.exp(1j * 2 * np.pi * phase) / np.sqrt(p.M)).ravel()
 
 
