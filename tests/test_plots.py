@@ -24,7 +24,8 @@ def test_every_plot_returns_a_figure():
     V = detection.preamble_zero_count(r, p)
     snrs = np.array([-12.0, -10.0])
     axis = np.logspace(-7, 0, 10)
-    by_method = {m: np.array([0.5, 0.9]) for m in ("full", "peaks", "freq")}
+    rate = simulation.ErrorRate(np.array([150, 3]), np.array([300, 1000]))
+    by_method = {m: rate for m in ("full", "peaks", "freq")}
 
     figures = [
         plots.modulated_signal(symbols, p),
@@ -37,7 +38,7 @@ def test_every_plot_returns_a_figure():
         plots.dechirp_steps(
             channel.system(c[: p.M], channel.FREQ_SELECTIVE, 0), 0, p, h=channel.FREQ_SELECTIVE
         ),
-        plots.ber_vs_snr(snrs, {"Canal plano": np.array([0.1, 0.01])}),
+        plots.ber_vs_snr(snrs, {"Canal plano": rate}),
         plots.frame_structure(payload, gap, p),
         plots.upchirp_correlation(y_clean, y, gap, p, SNR_dB),
         plots.full_preamble_detection(
@@ -68,11 +69,12 @@ def test_sdr_plots_return_figures():
     p = LoRaParams(7, 125e3)
     gap = 2
     r = 1e3 * channel.transmit_frame(rng.integers(0, p.M, size=4), gap, p, -5, channel.FLAT)
-    snrs, fer = np.array([-12.0, -10.0]), np.array([0.5, 0.0])
+    snrs = np.array([-12.0, -10.0])
+    rate = simulation.ErrorRate(np.array([150, 3]), np.array([300, 1000]))
 
     figures = [
         plots.snr_vs_atten(np.array([-10.0, -30.0]), snrs, snrs),
-        plots.fer_sdr(snrs, fer, snrs, fer, 50),
+        plots.fer_sdr(snrs, rate, snrs, simulation.ErrorRate(np.array([3, 0]), np.array([50, 50]))),
         plots.sdr_tone(np.array([r, 2 * r]), np.array([30.0, 50.0]), 3, p),
     ]
 
