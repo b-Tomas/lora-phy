@@ -12,6 +12,7 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MultipleLocator
 
 from .channel import FLAT
+from .detection import channel_ls, lmmse_weights
 from .params import LoRaParams
 from .rx import dechirp, dechirp_fft
 from .sdr import ADC_FULL_SCALE
@@ -23,6 +24,8 @@ _METHODS = {
     "full": ("Tiempo (preámbulo completo)", "C0"),
     "peaks": ("Tiempo (8 impulsos)", "C2"),
     "freq": ("Frecuencia (demodulación)", "C1"),
+    "ls": ("Estimación LS", "C3"),
+    "lmmse": ("Estimación LMMSE", "C4"),
 }
 
 
@@ -580,34 +583,159 @@ def freq_detection(
 # --- Desempeño de los detectores -----------------------------------------------------------
 
 
-def compare_methods(
-    SNRs_dB: np.ndarray, flat: dict[str, ErrorRate], sel: dict[str, ErrorRate]
-) -> Figure:
+def compare_methods(SNRs_dB: np.ndarray, fer: dict[str, dict[str, ErrorRate]]) -> Figure:
     """FER de los métodos vs SNR, un gráfico por canal, con eje y logarítmico (los puntos en 0 no
     se dibujan, y los que tienen pocos errores van huecos).
 
     Args:
         SNRs_dB (np.ndarray): SNR simulados, en decibelios.
-        flat (dict[str, ErrorRate]): FER de cada método en el canal plano, por clave de método
-            ("full", "peaks" o "freq").
-        sel (dict[str, ErrorRate]): FER de cada método en el canal selectivo.
+        fer (dict[str, dict[str, ErrorRate]]): Por título de canal, el FER de cada método por
+            clave de método ("full", "peaks", "freq", "ls" o "lmmse").
 
     Returns:
-        Figure: Figura con los dos gráficos.
+        Figure: Figura con un gráfico por canal, de a dos por fila.
     """
 
-    fig, axs = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
-    for ax, metric, channel in zip(axs, (flat, sel), ("Canal plano", "Canal selectivo")):
+    rows = (len(fer) + 1) // 2
+    fig, axs = plt.subplots(rows, 2, figsize=(12, 4.5 * rows), sharex=True, sharey=True)
+    axs = np.atleast_1d(axs).ravel()
+    for ax, (channel, metric) in zip(axs, fer.items()):
         for method, values in metric.items():
             name, color = _METHODS[method]
             _error_rate(ax, SNRs_dB, values, color=color, label=name)
         ax.set_yscale("log", nonpositive="mask")
         ax.set(title=channel, xlabel="SNR (dB)")
         ax.grid(True, which="both", alpha=0.5)
-    axs[0].set_ylabel("FER")
-    _few_errors_legend(axs[0], [*flat.values(), *sel.values()])
+    for ax in axs[len(fer) :]:
+        ax.set_visible(False)
+    for ax in axs[::2]:
+        ax.set_ylabel("FER")
+    _few_errors_legend(axs[0], [er for metric in fer.values() for er in metric.values()])
     axs[0].legend()
     fig.suptitle("FER vs SNR")
+    fig.tight_layout()
+    return fig
+
+
+def channel_estimates(
+    frames: dict[int, np.ndarray],
+    p: LoRaParams,
+    h: np.ndarray,
+    noise_power: float,
+    span: int,
+) -> Figure:
+    """Estimaciones LS y LMMSE del canal alrededor de cada inicio, junto con el canal real.
+
+    Cada trama se estima a partir de su inicio real, desde span/4 muestras antes hasta `span`
+    después: fuera de los L caminos del canal LS deja el ruido entero y LMMSE lo anula (su peso es
+    0 donde el perfil no tiene energía).
+
+    Args:
+        frames (dict[int, np.ndarray]): Señal recibida de cada trama, por su inicio real tau
+            (un gráfico por trama).
+        p (LoRaParams): Parámetros del sistema.
+        h (np.ndarray): Respuesta al impulso del canal. El receptor conoce su perfil |h|^2.
+        noise_power (float): Potencia del ruido por muestra (sigma^2).
+        span (int): Retardos que se grafican después del inicio.
+
+    Returns:
+        Figure: Figura con un gráfico por inicio.
+    """
+
+    before = span // 4
+    lags = np.arange(-before, span)
+    # Perfil y canal real en todos los retardos graficados: 0 fuera de los L caminos
+    P = np.zeros(lags.size)
+    P[before : before + h.size] = np.abs(h) ** 2
+    h_full = np.sqrt(P)
+    a = lmmse_weights(P, noise_power, p)
+
+    fig, axs = plt.subplots(1, len(frames), figsize=(6 * len(frames), 3.8), sharey=True)
+    for ax, (tau, r) in zip(np.atleast_1d(axs), frames.items()):
+        h_ls = channel_ls(r, p, tau - before, lags.size)
+        ax.stem(lags, h_full, linefmt="k-", markerfmt="ko", basefmt=" ", label="$|h[l]|$")
+        ax.plot(lags, np.abs(h_ls), "o-", color="C3", ms=3, lw=0.8, label=r"$|\hat h_{LS}[l]|$")
+        ax.plot(
+            lags, np.abs(a * h_ls), "s-", color="C4", ms=3, lw=0.8, label=r"$|\hat h_{LMMSE}[l]|$"
+        )
+        ax.set(title=f"Inicio τ = {tau}", xlabel="l (retardo, muestras)")
+        ax.grid(True, alpha=0.3)
+    np.atleast_1d(axs)[0].set_ylabel("Módulo")
+    np.atleast_1d(axs)[0].legend()
+    fig.tight_layout()
+    return fig
+
+
+def estimator_mse(
+    SNRs_dB: np.ndarray, mse: dict[str, np.ndarray], theory: dict[str, np.ndarray]
+) -> Figure:
+    """MSE de los estimadores del canal vs SNR: simulado (marcadores) y teórico (línea llena).
+
+    Args:
+        SNRs_dB (np.ndarray): SNR, en decibelios.
+        mse (dict[str, np.ndarray]): MSE simulado por estimador ("LS", "LMMSE").
+        theory (dict[str, np.ndarray]): MSE teórico por estimador.
+
+    Returns:
+        Figure: Figura con las curvas.
+    """
+
+    colors = {"LS": "C3", "LMMSE": "C4"}
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for name, values in mse.items():
+        ax.semilogy(SNRs_dB, values, "o", color=colors[name], label=f"{name} (simulado)")
+    for name, values in theory.items():
+        ax.semilogy(SNRs_dB, values, "-", color=colors[name], label=f"{name} (teórico)")
+    ax.set(
+        title="Error cuadrático medio de la estimación del canal",
+        xlabel="SNR (dB)",
+        ylabel=r"$E\|\hat h - h\|^2$",
+    )
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend()
+    fig.tight_layout()
+    return fig
+
+
+def energy_detection(
+    G: dict[str, np.ndarray],
+    etas: dict[str, float],
+    starts: dict[str, int | None],
+    tau: int,
+    p: LoRaParams,
+    P_FA: float,
+    SNR_dB: float,
+) -> Figure:
+    """Estadístico G[k] de la estimación LS y de la LMMSE, con sus umbrales.
+
+    Args:
+        G (dict[str, np.ndarray]): Estadístico sobre la trama, por estimador ("LS", "LMMSE").
+        etas (dict[str, float]): Umbral de cada estimador.
+        starts (dict[str, int | None]): Muestra de inicio detectada por cada estimador, o None.
+        tau (int): Muestra de inicio real.
+        p (LoRaParams): Parámetros del sistema.
+        P_FA (float): Probabilidad de falsa alarma por símbolo del umbral.
+        SNR_dB (float): SNR de la trama.
+
+    Returns:
+        Figure: Figura con un gráfico por estimador.
+    """
+
+    fig, axs = plt.subplots(len(G), 1, figsize=(10, 3.2 * len(G)), sharex=True)
+    for ax, (name, stat) in zip(np.atleast_1d(axs), G.items()):
+        ax.plot(stat, color="C3" if name == "LS" else "C4", lw=0.8)
+        ax.axhline(
+            etas[name],
+            color="r",
+            ls="--",
+            lw=0.8,
+            label=f"Umbral ($P_{{FA}}$={P_FA:.1e} por símbolo)",
+        )
+        _detection_marks(ax, tau, starts[name])
+        ax.set(title=f"{name}: inicio real k={tau}, detectado k={starts[name]} (SNR={SNR_dB} dB)")
+        ax.set_ylabel("$G[k]$")
+        ax.legend(loc="upper right")
+    np.atleast_1d(axs)[-1].set_xlabel("k (muestra)")
     fig.tight_layout()
     return fig
 
@@ -680,7 +808,7 @@ def false_alarms(
     """
 
     fig, ax = plt.subplots()
-    for (method, (target, measured)), marker in zip(results.items(), "s^o"):
+    for (method, (target, measured)), marker in zip(results.items(), "s^odv"):
         name, color = _METHODS[method]
         ax.loglog(target, measured, marker, color=color, label=name)
     ax.loglog([1e-6, 1], [1e-6, 1], color="k", ls="--", lw=0.8, label="Medida = pedida")
