@@ -446,8 +446,8 @@ def energy_statistic(r: np.ndarray, p: LoRaParams, w: np.ndarray) -> np.ndarray:
     """Energía ponderada de la estimación del canal a partir de cada inicio k.
 
     G[k] = sum_l w[l] |X[k + l] / n_upchirps|^2. En k = tau junta la energía de todos los caminos,
-    en lugar de solo la del principal como T[k]. Los caminos se suman en energía porque cada uno
-    llega con su propia fase. Con w = 1 es la energía de h_LS; con w = a (`lmmse_weights`), cada
+    en lugar de solo la del principal como T[k]. Los caminos se suman en energía porque el receptor
+    no conoce la fase con la que llega cada uno, solo su potencia (el perfil). Con w = 1 es la energía de h_LS; con w = a (`lmmse_weights`), cada
     coeficiente pesa según su SNR y los caminos débiles casi no suman ruido.
 
     Args:
@@ -484,12 +484,17 @@ def hypoexp_threshold(means: np.ndarray, P_FA: float) -> float:
         float: Umbral eta tal que P(G > eta) = P_FA.
     """
 
+    # Una media 0 (camino sin potencia) daría una tasa infinita: no aporta a la suma y se saca antes
+    assert np.all(np.asarray(means) > 0), "Las medias tienen que ser positivas"
     return _hypoexp_threshold(tuple(np.asarray(means, dtype=float)), P_FA)
 
 
 # El umbral se calcula una vez por SNR: el FER llama al detector en cada trama con las mismas medias
 @lru_cache(maxsize=256)
 def _hypoexp_threshold(means: tuple[float, ...], P_FA: float) -> float:
+    # ponytail: cada evaluación de la cola recorre ~lam x saltos, proporcional a la razón entre la
+    # mayor y la menor media (~180 con EXP_FAST a -24 dB, unos segundos por umbral). Con perfiles de
+    # mucho más rango dinámico conviene descartar los caminos de peso despreciable.
     mu = np.array(means) / max(means)  # Normalizado: se busca en unidades de la mayor media
     advance = (1 / mu) / np.max(1 / mu)  # Probabilidad de avanzar de etapa en cada salto
     lam = np.max(1 / mu)

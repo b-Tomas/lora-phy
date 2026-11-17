@@ -189,3 +189,9 @@ def test_hypoexp_threshold_close_means():
     eta = detection.hypoexp_threshold(means, 1e-2)
     G = (rng.exponential(size=(200_000, means.size)) * means).sum(axis=1)
     assert np.isclose(np.mean(G > eta), 1e-2, rtol=0.1)
+
+
+def test_hypoexp_threshold_rejects_zero_mean():
+    # Un camino sin potencia da una media 0: tasa infinita en la uniformización
+    with pytest.raises(AssertionError):
+        detection.hypoexp_threshold(np.array([1.0, 0.0]), 1e-2)

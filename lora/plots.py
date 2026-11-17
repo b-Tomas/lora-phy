@@ -24,7 +24,7 @@ _METHODS = {
     "full": ("Tiempo (preámbulo completo)", "C0"),
     "peaks": ("Tiempo (8 impulsos)", "C2"),
     "freq": ("Frecuencia (demodulación)", "C1"),
-    "ls": ("Estimación LS", "C3"),
+    "ls": ("Estimación LS", "C5"),
     "lmmse": ("Estimación LMMSE", "C4"),
 }
 
@@ -237,7 +237,8 @@ def _path_amplitudes(
     ax.plot(np.arange(r_fine.size) / L, np.abs(r_fine), lw=0.8, label="$|r|$")
     ax.plot(np.abs(r), "k.", ms=3)
     for i, h_i in enumerate(h):
-        label = "Camino directo" if i == 0 else "Eco"
+        # Un solo rótulo para todos los ecos, para no repetir la entrada en la leyenda
+        label = "Camino directo" if i == 0 else ("Eco" if i == 1 else None)
         ax.axhline(abs(h_i) / np.sqrt(p.M), color=f"C{i + 2}", ls="--", lw=1.2, label=label)
     # Lugar arriba de la curva para la leyenda
     ax.set(
@@ -654,7 +655,7 @@ def channel_estimates(
     for ax, (tau, r) in zip(np.atleast_1d(axs), frames.items()):
         h_ls = channel_ls(r, p, tau - before, lags.size)
         ax.stem(lags, h_full, linefmt="k-", markerfmt="ko", basefmt=" ", label="$|h[l]|$")
-        ax.plot(lags, np.abs(h_ls), "o-", color="C3", ms=3, lw=0.8, label=r"$|\hat h_{LS}[l]|$")
+        ax.plot(lags, np.abs(h_ls), "o-", color="C5", ms=3, lw=0.8, label=r"$|\hat h_{LS}[l]|$")
         ax.plot(
             lags, np.abs(a * h_ls), "s-", color="C4", ms=3, lw=0.8, label=r"$|\hat h_{LMMSE}[l]|$"
         )
@@ -680,7 +681,7 @@ def estimator_mse(
         Figure: Figura con las curvas.
     """
 
-    colors = {"LS": "C3", "LMMSE": "C4"}
+    colors = {"LS": "C5", "LMMSE": "C4"}
     fig, ax = plt.subplots(figsize=(8, 4))
     for name, values in mse.items():
         ax.semilogy(SNRs_dB, values, "o", color=colors[name], label=f"{name} (simulado)")
@@ -723,7 +724,7 @@ def energy_detection(
 
     fig, axs = plt.subplots(len(G), 1, figsize=(10, 3.2 * len(G)), sharex=True)
     for ax, (name, stat) in zip(np.atleast_1d(axs), G.items()):
-        ax.plot(stat, color="C3" if name == "LS" else "C4", lw=0.8)
+        ax.plot(stat, color="C5" if name == "LS" else "C4", lw=0.8)
         ax.axhline(
             etas[name],
             color="r",
