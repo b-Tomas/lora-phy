@@ -14,7 +14,7 @@ def test_measure_and_evaluate(scale_dB, all_errors):
     symbols, gaps, r, _ = sdr.measure(
         sdr.SimulatedPluto(), p, 4, NUM_SYMBOLS, GAP, calibrate=False, scale_dB=scale_dB
     )
-    errors, timing, _, _ = sdr.evaluate(r, symbols, gaps, p, 1e-3)
+    errors, timing, _ = sdr.evaluate(r, symbols, gaps, p, 1e-3)
     assert errors.size == 4
     assert sdr.frames(symbols, gaps, p).size % 2 == 0  # El Pluto repite mal los buffers impares
     assert errors.all() if all_errors else not errors.any() and not timing.any()
@@ -60,7 +60,8 @@ def test_measure_at_snr_limits_the_step(monkeypatch):
 def test_measure_at_snr_keeps_the_closest(monkeypatch):
     # Ningún intento llega a 0.5 dB: SNR de -22, -17, -22 y -17.5 dB. Se queda el primero, a 2 dB
     scales = _fake_air(monkeypatch, [12.0, 15.0, 13.0, 15.5])
-    _, scale_dB, snr = sdr.measure_at_snr(None, p, -20.0, -34.0, 1, NUM_SYMBOLS, GAP, max_tries=4)
+    monkeypatch.setattr(sdr, "SNR_MAX_TRIES", 4)
+    _, scale_dB, snr = sdr.measure_at_snr(None, p, -20.0, -34.0, 1, NUM_SYMBOLS, GAP)
     assert scales == [-34.0, -32.0, -35.0, -33.0]
     assert (scale_dB, snr) == (-34.0, -22.0)
 

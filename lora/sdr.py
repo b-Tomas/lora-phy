@@ -33,6 +33,11 @@ TX_ATTEN_RANGE_DB = (-89, -3)  # Con menos de 3 dB de atenuación se puede daña
 
 FLUSH = 5  # Buffers del RX descartados después de cambiar el TX. Subir si FER = 1 en loopback
 AGC_SETTLE = 15  # Buffers para que el AGC converja. Subir si la ganancia elegida varía
+SNR_TOL_DB = 0.5  # Diferencia aceptada entre el SNR medido y el buscado en `measure_at_snr`
+SNR_MAX_TRIES = 5  # Mediciones como máximo por SNR buscado
+SNR_MAX_STEP_DB = 3.0  # Corrección máxima de la escala entre mediciones
+SNR_REF_SCALE_DB = -22.0  # Escala de la medición de referencia de `measure_snr_sweep`
+SNR_REF_FRAMES = 20  # Tramas de la medición de referencia
 SETTLE_SIZE = 2**13  # Muestras de los buffers descartados: cortos, para no traerlos por la VPN
 
 
@@ -229,16 +234,13 @@ def measure_at_snr(
     n_frames: int,
     num_symbols: int,
     gap_range: tuple[int, int],
-    tol_dB: float = 0.5,
-    max_tries: int = 5,
-    max_step_dB: float = 3.0,
 ) -> tuple[tuple, float, float]:
     """`measure` con la escala del TX que lleva el SNR medido a `target_dB`.
 
     Por el aire, el SNR que da una misma escala varía alrededor de 1 dB entre capturas. Se mide con
-    `scale_dB` y, si el SNR medido se aleja más de `tol_dB` del buscado, se corrige la escala en la
-    diferencia y se mide de nuevo, hasta `max_tries` veces. Cada corrección se limita a
-    `max_step_dB`, para que una captura con interferencia no lleve la escala lejos. Se queda la
+    `scale_dB` y, si el SNR medido se aleja más de `SNR_TOL_DB` del buscado, se corrige la escala
+    en la diferencia y se mide de nuevo, hasta `SNR_MAX_TRIES` veces. Cada corrección se limita a
+    `SNR_MAX_STEP_DB`, para que una captura con interferencia no lleve la escala lejos. Se queda la
     medición más cercana al SNR buscado.
 
     Args:
@@ -247,25 +249,22 @@ def measure_at_snr(
         target_dB (float): SNR buscado, en dB.
         scale_dB (float): Escala inicial, en dB (`measure`).
         n_frames, num_symbols, gap_range: Como en `measure`.
-        tol_dB (float): Diferencia aceptada entre el SNR medido y el buscado, en dB.
-        max_tries (int): Mediciones como máximo.
-        max_step_dB (float): Corrección máxima de la escala entre mediciones, en dB.
 
     Returns:
         tuple[tuple, float, float]: Salida de `measure`, escala usada en dB y SNR medido en dB.
     """
 
     best = None  # (|error|, salida de measure, escala, SNR) de la medición más cercana
-    for _ in range(max_tries):
+    for _ in range(SNR_MAX_TRIES):
         run = measure(sdr, p, n_frames, num_symbols, gap_range, scale_dB=scale_dB)
         snr = capture_snr(run[2], run[0], run[1], p)
         error = target_dB - snr
         if best is None or abs(error) < best[0]:
             best = (abs(error), run, scale_dB, snr)
-        if abs(error) <= tol_dB:
+        if abs(error) <= SNR_TOL_DB:
             break
         # La escala no puede pasar el pico del TX (0 dB)
-        scale_dB = min(scale_dB + float(np.clip(error, -max_step_dB, max_step_dB)), 0.0)
+        scale_dB = min(scale_dB + float(np.clip(error, -SNR_MAX_STEP_DB, SNR_MAX_STEP_DB)), 0.0)
     return best[1], best[2], best[3]
 
 
@@ -276,12 +275,10 @@ def measure_snr_sweep(
     n_frames: int,
     num_symbols: int,
     gap_range: tuple[int, int],
-    scale_ref_dB: float = -22.0,
-    n_ref_frames: int = 20,
 ) -> tuple[list, np.ndarray]:
     """Un punto por SNR de `targets_dB`, con `measure_at_snr`.
 
-    La primera escala sale de una medición corta con `scale_ref_dB`, donde el SNR se mide con
+    La primera escala sale de una medición corta con `SNR_REF_SCALE_DB`, donde el SNR se mide con
     poco error. Con el ruido térmico del RX fijo, el SNR cambia lo mismo que la escala, así que la
     escala para un SNR es el SNR menos la diferencia entre SNR y escala medida. Esa diferencia se
     actualiza con cada punto que llega al SNR buscado, para seguir las variaciones del canal.
@@ -291,8 +288,6 @@ def measure_snr_sweep(
         p (LoRaParams): Parámetros del sistema.
         targets_dB (np.ndarray): SNR buscado de cada punto, en dB.
         n_frames, num_symbols, gap_range: Como en `measure`.
-        scale_ref_dB (float): Escala de la medición de referencia, en dB.
-        n_ref_frames (int): Tramas de la medición de referencia.
 
     Returns:
         tuple[list, np.ndarray]: Salidas de `measure`, una por punto (para `stack`), y escala
@@ -300,9 +295,9 @@ def measure_snr_sweep(
     """
 
     symbols, gaps, r, _ = measure(
-        sdr, p, n_ref_frames, num_symbols, gap_range, scale_dB=scale_ref_dB
+        sdr, p, SNR_REF_FRAMES, num_symbols, gap_range, scale_dB=SNR_REF_SCALE_DB
     )
-    offset_dB = capture_snr(r, symbols, gaps, p) - scale_ref_dB  # SNR medido menos escala
+    offset_dB = capture_snr(r, symbols, gaps, p) - SNR_REF_SCALE_DB  # SNR medido menos escala
     runs, scales_dB = [], []
     for target_dB in targets_dB:
         run, scale_dB, snr = measure_at_snr(
@@ -311,7 +306,7 @@ def measure_snr_sweep(
         print(
             f"SNR buscado {target_dB:5.1f} dB: escala {scale_dB:5.1f} dB, SNR medido {snr:5.1f} dB"
         )
-        if abs(snr - target_dB) <= 0.5:  # Una captura que no llegó no corrige la referencia
+        if abs(snr - target_dB) <= SNR_TOL_DB:  # Una captura que no llegó no corrige la referencia
             offset_dB = snr - scale_dB
         runs.append(run)
         scales_dB.append(scale_dB)
@@ -410,7 +405,6 @@ class Evaluation(NamedTuple):
     errors: np.ndarray  # Trama transmitida perdida: inicio no detectado en la muestra exacta
     timing: np.ndarray  # Inicio detectado menos inicio real, en muestras, de las detectadas
     snr: float  # SNR medido, en dB
-    starts: np.ndarray  # Inicios detectados por el receptor, en muestras de la captura
 
 
 def evaluate(
@@ -455,13 +449,13 @@ def evaluate(
     starts = receive(r, p, max(noise, ADC_NOISE_FLOOR), P_FA, num_symbols)
     snr = snr_dB(np.roll(r[:L], -delay), x)
     if starts.size == 0:
-        return Evaluation(np.ones(len(symbols), dtype=bool), starts, snr, starts)
+        return Evaluation(np.ones(len(symbols), dtype=bool), starts, snr)
 
     # Cada trama transmitida se compara con la detección más cercana a su inicio real
     nearest = np.abs(starts[:, None] - real).argmin(axis=0)
     timing = starts[nearest] - real
     found = np.abs(timing) < frame_len // 2
-    return Evaluation(timing != 0, timing[found], snr, starts)
+    return Evaluation(timing != 0, timing[found], snr)
 
 
 def save(path: str | Path, captures: np.ndarray, **meta) -> None:
