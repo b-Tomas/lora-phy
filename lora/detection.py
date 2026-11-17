@@ -3,7 +3,7 @@
 Tres métodos, con la misma probabilidad de falsa alarma por símbolo:
 
 1. Correlación con el preámbulo completo (tiempo, integración coherente): `detect_full`.
-2. Búsqueda de 8 picos (tiempo, integración no coherente): `detect_peaks`.
+2. Búsqueda de 8 impulsos (tiempo, integración no coherente): `detect_peaks`.
 3. Demodulación del preámbulo (frecuencia, decisión dura por ventana): `detect_freq`.
 
 Todos los detectores tienen la firma `detect(r, p, noise_power, P_FA)` (`Detector`) y devuelven
@@ -108,7 +108,7 @@ def preamble_correlation(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     y = np.fft.ifft(np.fft.fft(r, n) * np.conj(np.fft.fft(template, n)))
     y = y[: r.size - template.size + 1]
 
-    # Equivale a sumar los picos y[k + n M] de upchirp_correlation antes del módulo (coherente)
+    # Equivale a sumar los impulsos y[k + n M] de upchirp_correlation antes del módulo (coherente)
     return np.abs(y) ** 2
 
 
@@ -149,11 +149,11 @@ def detect_full(r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float) -
     return detect_start(preamble_correlation(r, p), eta, p.n_upchirps * p.M)
 
 
-# --- Tiempo: búsqueda de 8 picos -------------------------------------------------------------
+# --- Tiempo: búsqueda de 8 impulsos -------------------------------------------------------------
 
 
 def peaks_statistic(r: np.ndarray, p: LoRaParams) -> np.ndarray:
-    """Estadístico de la búsqueda de picos: energía de `p.n_upchirps` picos separados un símbolo.
+    """Estadístico de la búsqueda de impulsos: energía de `p.n_upchirps` impulsos separados un símbolo.
 
     Calcula S[k] = sum_n |y[k + n 2^SF]|^2 a partir de la correlación móvil con un up-chirp.
 
@@ -162,18 +162,18 @@ def peaks_statistic(r: np.ndarray, p: LoRaParams) -> np.ndarray:
         p (LoRaParams): Parámetros del sistema.
 
     Returns:
-        np.ndarray: Estadístico S[k] para cada muestra k donde entran los `p.n_upchirps` picos.
+        np.ndarray: Estadístico S[k] para cada muestra k donde entran los `p.n_upchirps` impulsos.
     """
 
     assert r.size >= p.n_upchirps * p.M, "La señal es más corta que los up-chirps del preámbulo"
 
-    # Energía de cada pico: el módulo se toma antes de sumar (no coherente)
+    # Energía de cada impulso: el módulo se toma antes de sumar (no coherente)
     y2 = np.abs(upchirp_correlation(r, p)) ** 2
 
-    # Posiciones k donde entran los n_upchirps picos: mismo largo que preamble_correlation
+    # Posiciones k donde entran los n_upchirps impulsos: mismo largo que preamble_correlation
     n_valid = y2.size - (p.n_upchirps - 1) * p.M
 
-    # Suma de los picos y[k + n M], desplazando el arreglo un símbolo por cada pico
+    # Suma de los impulsos y[k + n M], desplazando el arreglo un símbolo por cada impulso
     # start: la suma arranca de un arreglo de ceros, no del entero 0
     return sum(
         (y2[n * p.M : n * p.M + n_valid] for n in range(p.n_upchirps)), start=np.zeros(n_valid)
@@ -213,7 +213,7 @@ def peaks_threshold(noise_power: float, P_FA: float, p: LoRaParams) -> float:
 
 
 def detect_peaks(r: np.ndarray, p: LoRaParams, noise_power: float, P_FA: float) -> int | None:
-    """Detecta la muestra de inicio de la trama con la búsqueda de 8 picos.
+    """Detecta la muestra de inicio de la trama con la búsqueda de 8 impulsos.
 
     Args:
         r (np.ndarray): Señal recibida.
@@ -255,7 +255,7 @@ def preamble_zero_count(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     # Demodular cada ventana de M muestras (sincronía de símbolo). Se descarta el resto
     symbols_rx = demodulator(r[: r.size // p.M * p.M], p)
 
-    # 1 si el pico de la FFT de la ventana está en el bin 0, como en un up-chirp del preámbulo
+    # 1 si el impulso de la FFT de la ventana está en el bin 0, como en un up-chirp del preámbulo
     is_zero = (symbols_rx == 0).astype(int)
 
     # Cantidad de ventanas con símbolo 0 en las n_upchirps ventanas a partir de m
@@ -276,7 +276,7 @@ def zero_count_false_alarm(K: int, p: LoRaParams) -> float:
         float: P(V[m] >= K | H0).
     """
 
-    # Probabilidad de decidir símbolo 0 en una ventana de solo ruido: el pico cae en cualquier bin
+    # Probabilidad de decidir símbolo 0 en una ventana de solo ruido: el máximo cae en cualquier bin
     p0 = 2.0**-p.SF
     n = p.n_upchirps
 
@@ -333,7 +333,7 @@ def threshold(method: str, p: LoRaParams, noise_power: float, P_FA: float) -> fl
     tasa de falsas alarmas que un test por símbolo. En frecuencia hay un test por ventana.
 
     Args:
-        method (str): "full" (preámbulo completo), "peaks" (búsqueda de picos) o "freq"
+        method (str): "full" (preámbulo completo), "peaks" (búsqueda de impulsos) o "freq"
             (demodulación del preámbulo).
         p (LoRaParams): Parámetros del sistema.
         noise_power (float): Potencia del ruido por muestra (sigma^2). No se usa en "freq".
