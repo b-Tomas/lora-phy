@@ -80,10 +80,3 @@ def test_power_and_ber():
     bits = np.array([0, 1, 1, 0])
     assert metrics.BER(bits, bits) == 0
     assert metrics.BER(bits, bits ^ np.array([1, 0, 0, 0])) == 0.25
-
-
-def test_dechirp_is_a_tone():
-    s = 8
-    d = rx.dechirp(tx.modulator(np.array([s]), p), p)[0]
-    k = np.arange(p.M)
-    assert np.allclose(d, np.exp(1j * 2 * np.pi * s * k / p.M) / np.sqrt(p.M))

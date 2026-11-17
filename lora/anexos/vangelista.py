@@ -52,11 +52,9 @@ def demodulator(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     return np.argmax(np.abs(np.fft.fft(d)) ** 2, axis=1)
 
 
-def ber_vs_snr(
-    p: LoRaParams, SNRs_dB: np.ndarray, h: np.ndarray, simulations: int, num_symbols: int = 100
-) -> np.ndarray:
+def ber_vs_snr(p: LoRaParams, SNRs_dB: np.ndarray, h: np.ndarray, simulations: int) -> np.ndarray:
     """`simulation.ber_vs_snr` con el modulador y el demodulador de Ec. 2."""
 
     return simulation.ber_vs_snr(
-        p, SNRs_dB, h, simulations, num_symbols, modulate=modulator, demodulate=demodulator
+        p, SNRs_dB, h, simulations, modulate=modulator, demodulate=demodulator
     )
