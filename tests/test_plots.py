@@ -56,7 +56,18 @@ def test_every_plot_returns_a_figure():
         plots.freq_detection(
             rx.demodulator(r[: r.size // p.M * p.M], p), V, 4, gap, gap, p, P_FA, SNR_dB
         ),
-        plots.compare_methods(snrs, by_method, by_method),
+        plots.compare_methods(snrs, {"Canal plano": by_method, "Canal selectivo": by_method}),
+        plots.channel_estimates({gap * p.M: r, gap * p.M + 5: r}, p, channel.FLAT, npw, 16),
+        plots.estimator_mse(snrs, {"LS": snrs**2, "LMMSE": snrs**2}, {"LS": snrs**2}),
+        plots.energy_detection(
+            {"LS": T, "LMMSE": T},
+            {"LS": 1.0, "LMMSE": 1.0},
+            {"LS": None, "LMMSE": 3},
+            3,
+            p,
+            P_FA,
+            SNR_dB,
+        ),
         plots.roc({-14: simulation.roc_curves(p, -14, 10, axis, P_FA)}, axis, P_FA),
         plots.false_alarms(simulation.measured_false_alarms(p, 50, np.logspace(-1, -2, 3)), 50),
     ]

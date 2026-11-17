@@ -66,8 +66,8 @@ def test_measured_false_alarms(p):
     # Los umbrales de Neyman-Pearson cumplen la P_FA pedida (por posición) sobre ruido
     targets = np.array([1e-1, 1e-2])
     res = simulation.measured_false_alarms(p, 2000, targets)
-    assert set(res) == {"full", "peaks", "freq"}
-    for method in ("full", "peaks"):
+    assert set(res) == {"full", "peaks", "freq", "ls", "lmmse"}
+    for method in ("full", "peaks", "ls", "lmmse"):
         target, measured = res[method]
         assert np.allclose(measured, target, rtol=0.2)
 
@@ -79,3 +79,14 @@ def test_interval_contains_rate():
     assert np.all((lo <= er.rate + eps) & (er.rate <= hi + eps) & (lo >= 0) & (hi <= 1))
     # Con 100 errores el intervalo es de aproximadamente ±20 %
     assert hi[2] / er.rate[2] == pytest.approx(1.2, abs=0.03)
+
+
+def test_estimator_mse_matches_theory(p):
+    SNR_dB = -15.0
+    mse = simulation.estimator_mse(p, np.array([SNR_dB]), channel.EXP_FAST, 2000)
+    ls, lmmse = detection.estimator_mse_theory(
+        channel.EXP_FAST**2, channel.noise_power(p, SNR_dB), p
+    )
+    assert np.isclose(mse["LS"][0], ls, rtol=0.1)
+    assert np.isclose(mse["LMMSE"][0], lmmse, rtol=0.1)
+    assert lmmse < ls

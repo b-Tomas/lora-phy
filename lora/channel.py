@@ -16,6 +16,30 @@ FLAT = np.array([1.0])
 FREQ_SELECTIVE = np.array([sqrt(0.8), sqrt(0.2)])
 
 
+def exponential(alpha: float, L: int) -> np.ndarray:
+    """Respuesta al impulso exponencial de L caminos: h[n] = e^{-alpha n} para 0 <= n < L.
+
+    Se normaliza a energía 1 (sum h[n]^2 = 1), igual que FLAT y FREQ_SELECTIVE, para que el canal
+    no cambie la potencia media de la señal y el SNR siga siendo el de la trama transmitida.
+
+    Args:
+        alpha (float): Tasa de caída por muestra. Cuanto menor, más se reparte la energía entre
+            los caminos.
+        L (int): Cantidad de caminos (largo de la respuesta al impulso).
+
+    Returns:
+        np.ndarray: Respuesta al impulso h[n].
+    """
+
+    h = np.exp(-alpha * np.arange(L))
+    return h / np.sqrt(np.sum(h**2))
+
+
+# Canales exponenciales: uno que concentra la energía en los primeros caminos y otro que la reparte
+EXP_FAST = exponential(0.5, 8)
+EXP_SLOW = exponential(0.1, 16)
+
+
 def noise_from_SNR(c: np.ndarray, SNR_dB: float) -> np.ndarray:
     """Genera ruido blanco gaussiano aditivo (AWGN) a partir de la señal y la relación señal-ruido.
 
@@ -76,21 +100,27 @@ def system(c: np.ndarray, h: np.ndarray, z: np.ndarray | float) -> np.ndarray:
         np.ndarray: Señal recibida después de pasar por el canal ruidoso.
     """
 
-    # Convolución de la señal modulada con la respuesta al impulso del canal
-    # mode="same" asegura que la salida tenga el mismo tamaño que la señal de entrada
-    c_channel = np.convolve(c, h, mode="same")
+    # Convolución causal con la respuesta al impulso: r[n] = sum_l h[l] c[n - l]. Se descartan
+    # las últimas L - 1 muestras para que la salida tenga el mismo tamaño que la entrada
+    c_channel = np.convolve(c, h)[: c.size]
 
     # Sumar el ruido a la señal distorsionada por el canal
     return c_channel + z
 
 
 def transmit_frame(
-    symbols: np.ndarray, gap: int, p: LoRaParams, SNR_dB: float, h: np.ndarray
+    symbols: np.ndarray,
+    gap: int,
+    p: LoRaParams,
+    SNR_dB: float,
+    h: np.ndarray,
+    offset: int = 0,
 ) -> np.ndarray:
     """Simula la transmisión de una trama a través de un canal ruidoso.
 
     La trama es el preámbulo seguido de los símbolos del payload. Antes de la trama, el receptor
-    escucha `gap` símbolos de solo ruido, por lo que no sabe en qué símbolo empieza la trama.
+    escucha `gap` símbolos y `offset` muestras de solo ruido, por lo que no sabe en qué muestra
+    empieza la trama: tau = gap * 2^SF + offset.
 
     Args:
         symbols (np.ndarray): Símbolos del payload.
@@ -98,6 +128,8 @@ def transmit_frame(
         p (LoRaParams): Parámetros del sistema.
         SNR_dB (float): Relación señal-ruido en decibelios, respecto de la potencia de la trama.
         h (np.ndarray): Respuesta al impulso del canal.
+        offset (int): Muestras de silencio adicionales, para un inicio que no es múltiplo de un
+            símbolo.
 
     Returns:
         np.ndarray: Señal recibida después del canal ruidoso.
@@ -106,7 +138,7 @@ def transmit_frame(
     frame = np.concatenate([preamble(p), modulator(symbols, p)])
 
     # Silencio antes de la trama: el transmisor no emite nada
-    c = np.concatenate([np.zeros(gap * p.M), frame])
+    c = np.concatenate([np.zeros(gap * p.M + offset), frame])
 
     # El SNR se define respecto de la potencia de la trama, no del silencio
     # np.resize repite la trama hasta el largo de c: misma potencia y misma forma que c

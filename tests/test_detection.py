@@ -113,3 +113,85 @@ def test_detect_start_follows_the_peak():
     # El primer cruce llega más de `span` posiciones antes del máximo, que sube de a escalones
     statistic = np.array([0, 2, 0, 3, 0, 4, 0, 9, 1, 0, 1, 0, 0])
     assert detection.detect_start(statistic, 1, 3) == 7
+
+
+def test_preamble_xcorr_matches_correlation(p):
+    r = rng.normal(size=3000) + 1j * rng.normal(size=3000)
+    assert np.allclose(
+        np.abs(detection.preamble_xcorr(r, p)) ** 2, detection.preamble_correlation(r, p)
+    )
+
+
+def test_channel_ls_recovers_h(p):
+    r = channel.transmit_frame(np.array([5]), 3, p, 100, channel.EXP_FAST, offset=11)
+    h_ls = detection.channel_ls(r, p, 3 * p.M + 11, channel.EXP_FAST.size)
+    assert np.allclose(h_ls, channel.EXP_FAST, atol=0.02)  # Lóbulos laterales de la plantilla
+
+
+def test_lmmse_weights(p):
+    a = detection.lmmse_weights(np.array([1.0, 0.25]), 8.0, p)  # sigma^2 / 8 = 1
+    assert np.allclose(a, [0.5, 0.2])
+
+
+def test_estimator_mse_theory(p):
+    ls, lmmse = detection.estimator_mse_theory(np.array([1.0, 0.25]), 8.0, p)
+    assert np.isclose(ls, 2) and np.isclose(lmmse, 0.5 + 0.2)
+
+
+def test_erlang_threshold_matches_peaks(p):
+    assert np.isclose(
+        detection.erlang_threshold(p.n_upchirps, 2.0, 1e-3), detection.peaks_threshold(2.0, 1e-3, p)
+    )
+
+
+def test_ls_flat_equals_full(p):
+    r = channel.transmit_frame(rng.integers(0, p.M, 6), 4, p, -12, channel.FLAT)
+    npw = channel.noise_power(p, -12)
+    start_ls = detection.detect_ls(r, p, npw, 1e-3, P=np.array([1.0]))
+    assert start_ls == detection.detect_full(r, p, npw, 1e-3)
+
+
+def test_hypoexp_threshold_tail():
+    means = channel.EXP_SLOW**2 + 0.1  # 16 medias distintas
+    eta = detection.hypoexp_threshold(means, 1e-2)
+    G = (rng.exponential(size=(200_000, means.size)) * means).sum(axis=1)
+    assert np.isclose(np.mean(G > eta), 1e-2, rtol=0.1)
+
+
+def test_hypoexp_threshold_single_mean():
+    # Con una sola media es una exponencial: eta = -mu ln P_FA
+    assert np.isclose(detection.hypoexp_threshold(np.array([2.0]), 1e-3), -2.0 * np.log(1e-3))
+
+
+def test_energy_statistic_false_alarms(p):
+    npw = 1.0
+    r = np.sqrt(npw / 2) * (rng.normal(size=400 * p.M) + 1j * rng.normal(size=400 * p.M))
+    a = detection.lmmse_weights(channel.EXP_FAST**2, npw, p)
+    G = detection.energy_statistic(r, p, a)
+    assert G.size == detection.preamble_xcorr(r, p).size - a.size + 1
+    eta = detection.hypoexp_threshold(a * npw / p.n_upchirps, 1e-2)
+    assert np.isclose(np.mean(G > eta), 1e-2, rtol=0.15)
+
+
+@pytest.mark.parametrize("h", [channel.FREQ_SELECTIVE, channel.EXP_FAST, channel.EXP_SLOW])
+def test_detect_ls_lmmse_offset(p, h):
+    r = channel.transmit_frame(rng.integers(0, p.M, 4), 3, p, 100, h, offset=21)
+    npw = channel.noise_power(p, 100)
+    for detect in (detection.detect_ls, detection.detect_lmmse):
+        assert detect(r, p, npw, 1e-3, P=h**2) == 3 * p.M + 21
+
+
+def test_hypoexp_threshold_close_means():
+    # Pesos LMMSE casi iguales (EXP_SLOW a -4 dB con SF 8): la fórmula cerrada cancela mal
+    q = LoRaParams(8, 125e3)
+    npw = channel.noise_power(q, -4)
+    means = detection.lmmse_weights(channel.EXP_SLOW**2, npw, q) * npw / q.n_upchirps
+    eta = detection.hypoexp_threshold(means, 1e-2)
+    G = (rng.exponential(size=(200_000, means.size)) * means).sum(axis=1)
+    assert np.isclose(np.mean(G > eta), 1e-2, rtol=0.1)
+
+
+def test_hypoexp_threshold_rejects_zero_mean():
+    # Un camino sin potencia da una media 0: tasa infinita en la uniformización
+    with pytest.raises(AssertionError):
+        detection.hypoexp_threshold(np.array([1.0, 0.0]), 1e-2)

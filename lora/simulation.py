@@ -6,9 +6,14 @@ from typing import NamedTuple
 import numpy as np
 
 from . import params
-from .channel import FLAT, noise_from_SNR, noise_power, system, transmit_frame
+from .channel import EXP_FAST, FLAT, noise_from_SNR, noise_power, system, transmit_frame
 from .detection import (
     Detector,
+    channel_ls,
+    energy_statistic,
+    erlang_threshold,
+    hypoexp_threshold,
+    lmmse_weights,
     peaks_statistic,
     peaks_threshold,
     preamble_correlation,
@@ -306,6 +311,36 @@ def fer_vs_snr(
     return _sweep(_fer_point, SNRs_dB, curves, common)
 
 
+# --- Estimación del canal ---------------------------------------------------------------------
+
+
+def estimator_mse(
+    p: LoRaParams, SNRs_dB: np.ndarray, h: np.ndarray, num_frames: int
+) -> dict[str, np.ndarray]:
+    """MSE simulado de las estimaciones LS y LMMSE del canal, con el inicio de la trama conocido.
+
+    Args:
+        p (LoRaParams): Parámetros del sistema.
+        SNRs_dB (np.ndarray): SNR a simular, en decibelios.
+        h (np.ndarray): Respuesta al impulso del canal. El receptor conoce su perfil |h|^2.
+        num_frames (int): Tramas por SNR.
+
+    Returns:
+        dict[str, np.ndarray]: E||h_est - h||^2 en cada SNR, para "LS" y "LMMSE".
+    """
+
+    mse = {"LS": np.zeros(len(SNRs_dB)), "LMMSE": np.zeros(len(SNRs_dB))}
+    for i, SNR_dB in enumerate(SNRs_dB):
+        a = lmmse_weights(np.abs(h) ** 2, noise_power(p, SNR_dB), p)
+        for _ in range(num_frames):
+            # Un símbolo de payload alcanza: solo se usa el preámbulo, que empieza en la muestra 0
+            r = transmit_frame(params.rng.integers(0, p.M, size=1), 0, p, SNR_dB, h)
+            h_ls = channel_ls(r, p, 0, h.size)
+            mse["LS"][i] += np.sum(np.abs(h_ls - h) ** 2) / num_frames
+            mse["LMMSE"][i] += np.sum(np.abs(a * h_ls - h) ** 2) / num_frames
+    return mse
+
+
 # --- ROC y falsas alarmas --------------------------------------------------------------------
 
 
@@ -403,6 +438,8 @@ def measured_false_alarms(
 ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Mide la P_FA de cada método sobre una señal larga de solo ruido (-10 dB).
 
+    Los métodos con estimación del canal ("ls" y "lmmse") usan el perfil del canal EXP_FAST.
+
     Valida el cálculo de los umbrales: la fracción de posiciones que superan el umbral debe
     coincidir con la P_FA pedida, por posición.
 
@@ -422,6 +459,11 @@ def measured_false_alarms(
     T = preamble_correlation(r_noise, p)
     S = peaks_statistic(r_noise, p)
     V = preamble_zero_count(r_noise, p)
+    L = EXP_FAST.size
+    a = lmmse_weights(EXP_FAST**2, npw, p)
+    G_ls = energy_statistic(r_noise, p, np.ones(L))
+    G_lmmse = energy_statistic(r_noise, p, a)
+    var = npw / p.n_upchirps  # Varianza del ruido de cada coeficiente estimado
 
     return {
         "full": (
@@ -435,5 +477,13 @@ def measured_false_alarms(
         "freq": (
             np.array([zero_count_false_alarm(K, p) for K in Ks]),
             np.array([np.mean(V >= K) for K in Ks]),
+        ),
+        "ls": (
+            P_FA_targets,
+            np.array([np.mean(G_ls >= erlang_threshold(L, var, q)) for q in P_FA_targets]),
+        ),
+        "lmmse": (
+            P_FA_targets,
+            np.array([np.mean(G_lmmse >= hypoexp_threshold(a * var, q)) for q in P_FA_targets]),
         ),
     }
