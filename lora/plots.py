@@ -23,7 +23,6 @@ _METHODS = {
     "full": ("Tiempo (preámbulo completo)", "C0"),
     "peaks": ("Tiempo (8 impulsos)", "C2"),
     "freq": ("Frecuencia (demodulación)", "C1"),
-    "ideal": ("Detección ideal", "k"),
 }
 
 # Muestras por ventana de la FFT de los espectrogramas
@@ -95,9 +94,7 @@ def _annotate_frame(ax: Axes, gap: int, p: LoRaParams, n_samples: int) -> None:
 # --- Señal modulada y demodulación -----------------------------------------------------------
 
 
-def modulated_signal(
-    symbols: np.ndarray, p: LoRaParams, modulate=modulator, name: str = "c", L: int = 8
-) -> Figure:
+def modulated_signal(symbols: np.ndarray, p: LoRaParams, L: int = 8) -> Figure:
     """Señal modulada en el tiempo: parte real y espectrograma.
 
     La parte real se evalúa también entre muestras, con L puntos por chip, para que se vea la forma
@@ -106,41 +103,24 @@ def modulated_signal(
     Args:
         symbols (np.ndarray): Símbolos a modular.
         p (LoRaParams): Parámetros del sistema.
-        modulate: Modulador, como `tx.modulator`.
-        name (str): Nombre de la señal en LaTeX, para los títulos.
         L (int): Puntos por chip de la parte real.
 
     Returns:
         Figure: Figura con los dos gráficos.
     """
 
+    c = modulator(symbols, p)
     fig, axs = plt.subplots(2, 1, figsize=(10, 4.5))
-    _time_and_spectrogram(axs, modulate(symbols, p), modulate(symbols, p, L), name, p, L)
-    fig.tight_layout()
-    return fig
-
-
-def _time_and_spectrogram(
-    axs: np.ndarray,
-    x: np.ndarray,
-    x_fine: np.ndarray,
-    name: str,
-    p: LoRaParams,
-    L: int,
-    note: str = "puntos: muestras",
-) -> None:
-    """Parte real de `x` (línea entre muestras con `x_fine`, de L puntos por chip, y puntos en las
-    muestras) en `axs[0]`, y espectrograma de las muestras, centrado en la banda, en `axs[1]`."""
-
-    _real_part(axs[0], x_fine, x, L, f"Parte real de ${name}$ ({note})")
-    _specgram(axs[1], _centered(x), p)
+    _real_part(axs[0], modulator(symbols, p, L), c, L, "Parte real de $c$ (puntos: muestras)")
+    _specgram(axs[1], _centered(c), p)
     axs[1].set(
-        title=f"Espectrograma de ${name}\\,(-1)^k$ (centrado en la banda)",
-        ylabel="Frecuencia (kHz)",
+        title="Espectrograma de $c\\,(-1)^k$ (centrado en la banda)", ylabel="Frecuencia (kHz)"
     )
     for ax in axs:
         ax.set(xlabel="Muestras")
-        _vlines(ax, np.arange(x.size // p.M + 1) * p.M)
+        _vlines(ax, np.arange(len(symbols) + 1) * p.M)
+    fig.tight_layout()
+    return fig
 
 
 def _interpolate(x: np.ndarray, p: LoRaParams, L: int) -> np.ndarray:
@@ -561,23 +541,16 @@ def freq_detection(
 
 
 def compare_methods(
-    SNRs_dB: np.ndarray,
-    flat: dict[str, np.ndarray],
-    sel: dict[str, np.ndarray],
-    ylabel: str,
-    title: str,
-    logy: bool = False,
+    SNRs_dB: np.ndarray, flat: dict[str, np.ndarray], sel: dict[str, np.ndarray]
 ) -> Figure:
-    """Compara una métrica de los métodos vs SNR, un gráfico por canal.
+    """FER de los métodos vs SNR, un gráfico por canal, con eje y logarítmico (los puntos en 0 no
+    se dibujan).
 
     Args:
         SNRs_dB (np.ndarray): SNR simulados, en decibelios.
-        flat (dict[str, np.ndarray]): Métrica de cada método en el canal plano, por clave de
-            método ("full", "peaks", "freq" o "ideal").
-        sel (dict[str, np.ndarray]): Métrica de cada método en el canal selectivo.
-        ylabel (str): Nombre de la métrica.
-        title (str): Título de la figura.
-        logy (bool): Eje y logarítmico. Los puntos en 0 no se dibujan.
+        flat (dict[str, np.ndarray]): FER de cada método en el canal plano, por clave de método
+            ("full", "peaks" o "freq").
+        sel (dict[str, np.ndarray]): FER de cada método en el canal selectivo.
 
     Returns:
         Figure: Figura con los dos gráficos.
@@ -588,13 +561,12 @@ def compare_methods(
         for method, values in metric.items():
             name, color = _METHODS[method]
             ax.plot(SNRs_dB, values, color=color, marker="o", label=name)
-        if logy:
-            ax.set_yscale("log", nonpositive="mask")
+        ax.set_yscale("log", nonpositive="mask")
         ax.set(title=channel, xlabel="SNR (dB)")
-        ax.grid(True, which="both" if logy else "major", alpha=0.5)
-    axs[0].set_ylabel(ylabel)
+        ax.grid(True, which="both", alpha=0.5)
+    axs[0].set_ylabel("FER")
     axs[0].legend()
-    fig.suptitle(title)
+    fig.suptitle("FER vs SNR")
     fig.tight_layout()
     return fig
 
