@@ -1,4 +1,4 @@
-"""Gráficos del Anexo C."""
+"""Gráficos del Anexo A."""
 
 import matplotlib.pyplot as plt
 import numpy as np

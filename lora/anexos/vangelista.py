@@ -1,4 +1,4 @@
-"""Sistema con la Ec. 2 tal como está escrita en el paper (Anexo C).
+"""Sistema con la Ec. 2 tal como está escrita en el paper (Anexo A).
 
 La Ec. 2 escribe la fase como la frecuencia multiplicada por el tiempo, 2π f(k) kT, sin el 1/2 del
 término cuadrático. Su fase crece con k^2 en lugar de k^2/2:

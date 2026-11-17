@@ -39,7 +39,7 @@ def transmission_ber(
         p (LoRaParams): Parámetros del sistema.
         SNR_dB (float): Relación señal-ruido en decibelios.
         h (np.ndarray): Respuesta al impulso del canal.
-        modulate, demodulate: Modulador y demodulador (los del Anexo C usan Ec. 2).
+        modulate, demodulate: Modulador y demodulador (los del Anexo A usan Ec. 2).
 
     Returns:
         float: Bit Error Rate (BER) de la transmisión simulada.

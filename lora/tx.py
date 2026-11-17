@@ -67,7 +67,7 @@ def modulator(symbols: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
 
         c(nT_s + kT) = e^{j2π (s + k/2) k / 2^SF} / sqrt(2^SF).
 
-    Ec. 2 multiplica la frecuencia por kT y omite el 1/2 del término cuadrático (Anexo C del
+    Ec. 2 multiplica la frecuencia por kT y omite el 1/2 del término cuadrático (Anexo A del
     notebook). Muestrea a k = 0..2**SF-1 chips por cada símbolo n.
 
     Args:

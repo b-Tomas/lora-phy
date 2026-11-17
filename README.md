@@ -64,7 +64,7 @@ uv run ruff format .    # Formato
 | [`simulation`](lora/simulation.py) | Simulaciones Monte Carlo: BER, tramas, ROC y falsas alarmas        |
 | [`sdr`](lora/sdr.py)               | Transmisión y recepción con ADALM-Pluto                            |
 | [`plots`](lora/plots.py)           | Gráficos del notebook                                              |
-| [`anexos`](lora/anexos/)           | Anexo C: sistema con la Ec. 2 del paper y su comparación          |
+| [`anexos`](lora/anexos/)           | Anexo A: sistema con la Ec. 2 del paper y su comparación          |
 
 ## Autores
 
