@@ -1,7 +1,3 @@
-[build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "lora"
 version = "0.1.0"
@@ -10,12 +6,12 @@ requires-python = ">=3.10"
 dependencies = ["numpy", "matplotlib"]
 
 [project.optional-dependencies]
-dev = ["jupyter", "pytest", "ruff"]
+dev = ["jupyter", "ruff"]
 # 1.x es para la API de libiio 1.x; el lab usa libiio 0.26
 sdr = ["pyadi-iio", "pylibiio>=0.25,<1"]
 
-[tool.setuptools]
-packages = ["lora"]
+[tool.uv]
+package = false  # Todo el código está en el notebook: no hay paquete para instalar
 
 [tool.pyright]
 typeCheckingMode = "standard"

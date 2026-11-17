@@ -1,1 +1,5 @@
--e .[dev]
+numpy
+matplotlib
+jupyter
+ruff
+# SDR (opcional, solo para medir con el ADALM-Pluto): pyadi-iio y pylibiio>=0.25,<1
