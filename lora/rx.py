@@ -5,9 +5,8 @@ import numpy as np
 from .params import LoRaParams
 
 
-def downchirp(p: LoRaParams, n_symbols: int = 1, L: int = 1) -> np.ndarray:
-    """Down-chirp del demodulador: e^{-j2π k^2 / (2 · 2^SF)} para k = 0..2^SF-1, repetido en cada
-    símbolo.
+def downchirp(p: LoRaParams) -> np.ndarray:
+    """Down-chirp del demodulador: e^{-j2π k^2 / (2 · 2^SF)} para k = 0..2^SF-1.
 
     Es la señal que genera el demodulador y que multiplica a la señal recibida, sin r(nT_s + kT).
     Es el conjugado del up-chirp de `tx.modulator` (símbolo 0), así que cancela su término k^2/2 y
@@ -16,39 +15,35 @@ def downchirp(p: LoRaParams, n_symbols: int = 1, L: int = 1) -> np.ndarray:
 
     Args:
         p (LoRaParams): Parámetros del sistema.
-        n_symbols (int): Cantidad de símbolos.
-        L (int): Puntos por chip. Con L > 1 evalúa la fórmula también entre muestras, para graficar.
 
     Returns:
-        np.ndarray: Down-chirp (complejo), de n_symbols * 2^SF * L puntos.
+        np.ndarray: Down-chirp (complejo), de 2^SF muestras.
     """
 
-    k = np.arange(p.M * L) / L  # Chips, con L puntos por chip
-    return np.tile(np.exp(-1j * 2 * np.pi * k**2 / (2 * p.M)), n_symbols)
+    k = np.arange(p.M)  # Chips
+    return np.exp(-1j * 2 * np.pi * k**2 / (2 * p.M))
 
 
-def dechirp(r: np.ndarray, p: LoRaParams, L: int = 1) -> np.ndarray:
+def dechirp(r: np.ndarray, p: LoRaParams) -> np.ndarray:
     """Multiplica cada símbolo recibido por el down-chirp de `downchirp` (de-chirpeado).
 
     Args:
         r (np.ndarray): Señal LoRa modulada recibida.
         p (LoRaParams): Parámetros del sistema.
-        L (int): Puntos por chip de `r`. Con L > 1 evalúa el down-chirp también entre muestras,
-            para graficar.
 
     Returns:
         np.ndarray: d(nT_s + kT) = r(nT_s + kT) e^{-j2π k²/(2 · 2^SF)} para cada símbolo n, de
-            forma (N, 2^SF L).
+            forma (N, 2^SF).
     """
 
     # Validar el largo del array
-    assert r.size % (p.M * L) == 0, "El número de muestras debe ser múltiplo de L * 2**SF"
+    assert r.size % p.M == 0, "El número de muestras debe ser múltiplo de 2**SF"
 
-    # Convertir r a un arreglo de forma (N, M L): R[n, k] = r(nT_s + kT)
-    R = r.reshape(-1, p.M * L)
+    # Convertir r a un arreglo de forma (N, M): R[n, k] = r(nT_s + kT)
+    R = r.reshape(-1, p.M)
 
     # Obtener d(nT_s + kT) = r(nT_s + kT) * downchirp
-    return R * downchirp(p, L=L)
+    return R * downchirp(p)
 
 
 def dechirp_fft(r: np.ndarray, p: LoRaParams) -> np.ndarray:

@@ -38,8 +38,6 @@ def test_downchirp():
     k = np.arange(p.M)
     expected = np.exp(-2j * np.pi * k**2 / (2 * p.M))
     assert np.allclose(rx.downchirp(p), expected)
-    assert np.allclose(rx.downchirp(p, 3), np.tile(expected, 3))
-    assert np.allclose(rx.downchirp(p, 2, 8)[::8], np.tile(expected, 2))
     # Es el conjugado del up-chirp del modulador (símbolo 0)
     assert np.allclose(rx.downchirp(p), np.conj(tx.modulator(np.array([0]), p)) * np.sqrt(p.M))
 
