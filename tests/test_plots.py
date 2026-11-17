@@ -24,11 +24,10 @@ def test_every_plot_returns_a_figure():
     V = detection.preamble_zero_count(r, p)
     snrs = np.array([-12.0, -10.0])
     axis = np.logspace(-7, 0, 10)
-    by_method = {m: np.array([0.5, 0.9]) for m in ("full", "peaks", "freq", "ideal")}
+    by_method = {m: np.array([0.5, 0.9]) for m in ("full", "peaks", "freq")}
 
     figures = [
         plots.modulated_signal(symbols, p),
-        plots.modulated_signal(symbols, p, tx.integrated_modulator, "\\tilde{c}"),
         plots.fft_decision({"Canal plano": rx.dechirp_fft(c, p)}, symbols, p),
         plots.fft_decision(
             {"A": rx.dechirp_fft(c, p), "B": rx.dechirp_fft(c, p)}, symbols, p, SNR_dB
@@ -56,8 +55,7 @@ def test_every_plot_returns_a_figure():
         plots.freq_detection(
             rx.demodulator(r[: r.size // p.M * p.M], p), V, 4, gap, gap, p, P_FA, SNR_dB
         ),
-        plots.compare_methods(snrs, by_method, by_method, "P(inicio correcto)", "Título"),
-        plots.compare_methods(snrs, by_method, by_method, "FER", "Título", logy=True),
+        plots.compare_methods(snrs, by_method, by_method),
         plots.roc({-14: simulation.roc_curves(p, -14, 10, axis, P_FA)}, axis, P_FA),
         plots.false_alarms(simulation.measured_false_alarms(p, 50, np.logspace(-1, -2, 3)), 50),
     ]

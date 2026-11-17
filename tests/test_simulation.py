@@ -6,7 +6,15 @@ from lora import channel, detection, seed, simulation
 def test_fer_noiseless(p):
     # Sin ruido el detector encuentra el inicio exacto de todas las tramas
     fer = simulation.fer_vs_snr(
-        detection.detect_full, np.array([100.0]), channel.FLAT, p, 1e-3, 3, num_symbols=4, gap=3
+        detection.detect_full,
+        np.array([100.0]),
+        channel.FLAT,
+        p,
+        1e-3,
+        3,
+        num_symbols=4,
+        gap=3,
+        min_errors=1,
     )
     assert fer[0] == 0
 
@@ -34,9 +42,9 @@ def test_fer_vs_snr_reproducible(p):
     # Con la misma semilla, la corrida en paralelo da el mismo FER
     args = (detection.detect_full, np.array([-14.0, -12.0]), channel.FLAT, p, 1e-3, 20)
     seed(0)
-    fer = simulation.fer_vs_snr(*args, num_symbols=4, gap=3)
+    fer = simulation.fer_vs_snr(*args, num_symbols=4, gap=3, min_errors=20)
     seed(0)
-    assert np.array_equal(fer, simulation.fer_vs_snr(*args, num_symbols=4, gap=3))
+    assert np.array_equal(fer, simulation.fer_vs_snr(*args, num_symbols=4, gap=3, min_errors=20))
 
 
 def test_ber_vs_snr_noiseless(p):

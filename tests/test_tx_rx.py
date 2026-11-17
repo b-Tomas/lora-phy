@@ -34,6 +34,24 @@ def test_dechirp_fft_matches_demodulator():
     assert np.array_equal(np.argmax(np.abs(D) ** 2, axis=1), symbols)
 
 
+def test_downchirp():
+    k = np.arange(p.M)
+    expected = np.exp(-2j * np.pi * k**2 / (2 * p.M))
+    assert np.allclose(rx.downchirp(p), expected)
+    # Es el conjugado del up-chirp del modulador (símbolo 0)
+    assert np.allclose(rx.downchirp(p), np.conj(tx.modulator(np.array([0]), p)) * np.sqrt(p.M))
+
+
+@pytest.mark.parametrize("s", [0, 1, 32, 80, 127])
+def test_dechirped_symbol_is_a_tone(s):
+    # El modulador de-chirpeado: un tono de frecuencia constante s B / M, en el bin s
+    k = np.arange(p.M)
+    d = rx.dechirp(tx.modulator(np.array([s]), p), p)[0]
+    assert np.allclose(d, np.exp(2j * np.pi * s * k / p.M) / np.sqrt(p.M))
+    D = np.abs(rx.dechirp_fft(tx.modulator(np.array([s]), p), p)[0]) ** 2
+    assert np.isclose(D[s], 1) and np.allclose(np.delete(D, s), 0)
+
+
 def test_instantaneous_frequency():
     f = tx.instantaneous_frequency(np.array([0, p.M - 1]), p)
     assert f.shape == (2 * p.M,)
@@ -41,15 +59,13 @@ def test_instantaneous_frequency():
     assert f[p.M + 1] == 0  # Se repliega al llegar a B
 
 
-def test_integrated_modulator():
+def test_modulator():
     symbols = np.array([0, 32, 80])
     k = np.tile(np.arange(p.M), 3)
     s = np.repeat(symbols, p.M)
-    # En las muestras: Ec. 2 con k/2 en lugar de k
     expected = np.exp(2j * np.pi * (s + k / 2) * k / p.M) / np.sqrt(p.M)
-    assert np.allclose(tx.integrated_modulator(symbols, p), expected)
-    assert np.allclose(tx.integrated_modulator(symbols, p, 8)[::8], expected)
-    assert np.allclose(tx.modulator(symbols, p, 8)[::8], tx.modulator(symbols, p))
+    assert np.allclose(tx.modulator(symbols, p), expected)
+    assert np.allclose(tx.modulator(symbols, p, 8)[::8], expected)
 
 
 @pytest.mark.parametrize("n_downchirps", [0, 1, 2.25, 2.3])
@@ -64,10 +80,3 @@ def test_power_and_ber():
     bits = np.array([0, 1, 1, 0])
     assert metrics.BER(bits, bits) == 0
     assert metrics.BER(bits, bits ^ np.array([1, 0, 0, 0])) == 0.25
-
-
-def test_dechirp_is_a_tone():
-    s = 8
-    d = rx.dechirp(tx.modulator(np.array([s]), p), p)[0]
-    k = np.arange(p.M)
-    assert np.allclose(d, np.exp(1j * 2 * np.pi * s * k / p.M) / np.sqrt(p.M))

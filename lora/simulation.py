@@ -25,35 +25,47 @@ from .tx import encoder, modulator, preamble
 # --- BER -------------------------------------------------------------------------------------
 
 
-def transmission_ber(p: LoRaParams, SNR_dB: float, h: np.ndarray, num_symbols: int = 100) -> float:
-    """Simula la transmisión de bits aleatorios a través de un canal ruidoso y calcula el BER.
+def transmission_ber(
+    p: LoRaParams,
+    SNR_dB: float,
+    h: np.ndarray,
+    modulate=modulator,
+    demodulate=demodulator,
+) -> float:
+    """Simula la transmisión de 100 símbolos aleatorios a través de un canal ruidoso y calcula el
+    BER.
 
     Args:
         p (LoRaParams): Parámetros del sistema.
         SNR_dB (float): Relación señal-ruido en decibelios.
         h (np.ndarray): Respuesta al impulso del canal.
-        num_symbols (int): Símbolos transmitidos.
+        modulate, demodulate: Modulador y demodulador (los del Anexo A usan Ec. 2).
 
     Returns:
         float: Bit Error Rate (BER) de la transmisión simulada.
     """
 
-    # Conjunto de bits aleatorios a transmitir correspondiente a num_symbols símbolos
-    bits_tx = params.rng.integers(0, 2, size=p.SF * num_symbols)
+    # Conjunto de bits aleatorios a transmitir correspondiente a 100 símbolos
+    bits_tx = params.rng.integers(0, 2, size=p.SF * 100)
 
     # Transmisión completa
-    c = modulator(encoder(bits_tx, p), p)  # Señal modulada
+    c = modulate(encoder(bits_tx, p), p)  # Señal modulada
     z = noise_from_SNR(c, SNR_dB)  # Ruido generado a partir de la señal y el SNR
     r = system(c, h, z)  # Señal recibida después del canal ruidoso
 
     # Demodulación y decodificación
-    bits_rx = decoder(demodulator(r, p), p)
+    bits_rx = decoder(demodulate(r, p), p)
 
     return BER(bits_tx, bits_rx)
 
 
 def ber_vs_snr(
-    p: LoRaParams, SNRs_dB: np.ndarray, h: np.ndarray, simulations: int, num_symbols: int = 100
+    p: LoRaParams,
+    SNRs_dB: np.ndarray,
+    h: np.ndarray,
+    simulations: int,
+    modulate=modulator,
+    demodulate=demodulator,
 ) -> np.ndarray:
     """BER promedio de `simulations` transmisiones para cada SNR.
 
@@ -62,7 +74,7 @@ def ber_vs_snr(
         SNRs_dB (np.ndarray): SNR a simular, en decibelios.
         h (np.ndarray): Respuesta al impulso del canal.
         simulations (int): Transmisiones simuladas por SNR.
-        num_symbols (int): Símbolos por transmisión.
+        modulate, demodulate: Como en `transmission_ber`.
 
     Returns:
         np.ndarray: BER para cada SNR.
@@ -70,7 +82,9 @@ def ber_vs_snr(
 
     return np.array(
         [
-            np.mean([transmission_ber(p, SNR_dB, h, num_symbols) for _ in range(simulations)])
+            np.mean(
+                [transmission_ber(p, SNR_dB, h, modulate, demodulate) for _ in range(simulations)]
+            )
             for SNR_dB in SNRs_dB
         ]
     )
@@ -88,7 +102,7 @@ def fer_at_snr(
     simulations: int,
     num_symbols: int,
     gap: int,
-    min_errors: int | None = None,
+    min_errors: int,
 ) -> float:
     """Simula tramas con un detector y estima el FER para un SNR.
 
@@ -102,11 +116,10 @@ def fer_at_snr(
         h (np.ndarray): Respuesta al impulso del canal.
         p (LoRaParams): Parámetros del sistema.
         P_FA (float): Probabilidad de falsa alarma por símbolo.
-        simulations (int): Tramas simuladas. Con `min_errors`, el máximo.
+        simulations (int): Tramas simuladas como máximo.
         num_symbols (int): Símbolos del payload por trama.
         gap (int): Símbolos de silencio antes de la trama.
-        min_errors (int | None): Si se indica, termina al juntar esa cantidad de tramas
-            perdidas. Donde el FER es alto alcanzan pocas tramas, y las demás se gastan donde
+        min_errors (int): Termina al juntar esa cantidad de tramas perdidas. Donde el FER es alto alcanzan pocas tramas, y las demás se gastan donde
             es bajo.
 
     Returns:
@@ -116,7 +129,7 @@ def fer_at_snr(
     # Potencia del ruido por muestra (sigma^2), que el receptor conoce
     npw = noise_power(p, SNR_dB)
     frames = errors = 0
-    while frames < simulations and (min_errors is None or errors < min_errors):
+    while frames < simulations and errors < min_errors:
         r = transmit_frame(params.rng.integers(0, p.M, size=num_symbols), gap, p, SNR_dB, h)
         errors += detect(r, p, npw, P_FA) != gap * p.M
         frames += 1
@@ -139,7 +152,7 @@ def fer_vs_snr(
     simulations: int,
     num_symbols: int,
     gap: int,
-    min_errors: int | None = None,
+    min_errors: int,
 ) -> np.ndarray:
     """FER para cada SNR, con `fer_at_snr`. Los SNR se simulan en paralelo, uno por proceso.
 
@@ -268,7 +281,7 @@ def roc_curves(
 
 
 def measured_false_alarms(
-    p: LoRaParams, num_noise_symbols: int, P_FA_targets: np.ndarray, Ks: tuple[int, ...] = (1, 2)
+    p: LoRaParams, num_noise_symbols: int, P_FA_targets: np.ndarray
 ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Mide la P_FA de cada método sobre una señal larga de solo ruido (-10 dB).
 
@@ -278,13 +291,14 @@ def measured_false_alarms(
     Args:
         p (LoRaParams): Parámetros del sistema.
         num_noise_symbols (int): Largo de la señal de ruido, en símbolos.
-        P_FA_targets (np.ndarray): P_FA pedidas, por posición, para los métodos en el tiempo.
-        Ks (tuple[int, ...]): Umbrales a medir en frecuencia (solo los de P_FA medible).
+        P_FA_targets (np.ndarray): P_FA pedidas, por posición, para los métodos en el tiempo. En
+            frecuencia se miden los umbrales K = 1 y K = 2, los únicos con P_FA medible.
 
     Returns:
         dict[str, tuple[np.ndarray, np.ndarray]]: Para cada método, P_FA pedida y medida.
     """
 
+    Ks = (1, 2)
     npw = noise_power(p, -10)
     r_noise = noise_from_SNR(np.resize(preamble(p), num_noise_symbols * p.M), -10)
     T = preamble_correlation(r_noise, p)
