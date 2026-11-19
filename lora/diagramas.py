@@ -1,4 +1,4 @@
-"""Diagramas orientativos del TP, en SVG, en la carpeta `diagramas/` del repositorio.
+"""Diagramas orientativos del TP, en SVG y GIF, en la carpeta `diagramas/` del repositorio.
 
 Requiere el extra `diagramas` (schemdraw):
 
@@ -9,6 +9,7 @@ Requiere el extra `diagramas` (schemdraw):
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import schemdraw
 from schemdraw import dsp
 from schemdraw import elements as elm
@@ -451,6 +452,135 @@ def inicio_payload() -> None:
     save_figure(fig, "inicio_payload_trama")
 
 
+# --- 5. Recorrido de la plantilla sobre la trama (GIF) ----------------------------------------
+# Métodos 1 y 2 del notebook, sobre el escenario de la detección (cell "Escenario ...")
+
+
+def _chirp_simbolico(n: int = 200) -> tuple[np.ndarray, np.ndarray]:
+    """Up-chirp simbólico en [0, 1]: senoidal de pocos ciclos con frecuencia creciente.
+
+    No es la forma de onda real (2^SF muestras, cientos de ciclos): solo muestra que la plantilla
+    es una onda cuya frecuencia sube."""
+    x = np.linspace(0, 1, n)
+    f0, f1 = 1.0, 7.0  # Ciclos por símbolo al principio y al final: 4 ciclos en total
+    return x, np.sin(2 * np.pi * (f0 * x + (f1 - f0) * x**2 / 2))
+
+
+def _recorrido(metodo: str) -> None:
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    from . import channel, detection, rng, seed
+    from .params import LoRaParams
+
+    p = LoRaParams(SF=8, B=125e3)
+    gap, SNR_dB = 5, -10
+    P_FA = 1 / 60 * p.Ts  # Una falsa alarma por minuto, como en el notebook
+    seed(0)
+    symbols_tx = rng.integers(0, p.M, size=10)
+    r = channel.transmit_frame(symbols_tx, gap, p, SNR_dB, channel.FLAT)
+    r_clean = channel.transmit_frame(symbols_tx, gap, p, 100, channel.FLAT)
+    npw = channel.noise_power(p, SNR_dB)
+    span = p.n_upchirps * p.M
+
+    if metodo == "full":
+        stat = detection.preamble_correlation(r, p)
+        eta = detection.threshold("full", p, npw, P_FA)
+        titulo = "1. Correlación con el preámbulo: plantilla de 8 up-chirps"
+        stat_label = "$T[k] = |\\langle r_k, p \\rangle|^2$"
+        eta_label = f"umbral $\\eta$ ($P_{{FA}}$ = {P_FA:.1e})"
+        ylabel, nombre, alturas = "$T[k]$", "sincronizacion_8_upchirps", [1, 1.2]
+    else:
+        y2 = np.abs(detection.upchirp_correlation(r, p)) ** 2
+        stat = detection.peaks_statistic(r, p)
+        eta = detection.threshold("peaks", p, npw, P_FA)
+        titulo = "2. Búsqueda de 8 impulsos: plantilla de 1 up-chirp"
+        stat_label = "$S[k] = \\sum_{n=0}^{7} |y[k + n\\,2^{SF}]|^2$"
+        eta_label = "umbral $\\eta_S$ (cola Erlang de orden 8)"
+        ylabel, nombre, alturas = "$S[k]$", "sincronizacion_1_upchirp", [1, 1, 1]
+
+    n_x = stat.size  # Posiciones k donde entra la plantilla completa
+    ks = np.arange(0, n_x, 32)
+    fig, axs = plt.subplots(
+        len(alturas),
+        1,
+        figsize=(9.75, 1.6 * sum(alturas) + 1.4),
+        sharex=True,
+        gridspec_kw={"height_ratios": alturas},
+    )
+
+    # Trama: partes de fondo, señal recibida y trama sin ruido
+    ax = axs[0]
+    b = [0, gap * p.M, gap * p.M + span, gap * p.M + p.preamble_len, r.size]
+    for x0, x1, texto, color in zip(
+        b[:-1],
+        b[1:],
+        ["silencio", "8 up-chirps", "2.25\ndown", "payload"],
+        ["0.96", "#e8f3e6", "0.9", "0.96"],
+    ):
+        ax.axvspan(x0, x1, color=color, zorder=0)
+        ax.text((x0 + min(x1, n_x)) / 2, 0.48, texto, ha="center", va="top", fontsize=8)
+    ax.plot(np.real(r), color="0.55", lw=0.4, label=f"Re{{$r[k]$}} (SNR = {SNR_dB} dB)")
+    ax.plot(np.real(r_clean), color="C2", lw=0.6, label="trama sin ruido")
+    ax.set(ylim=(-0.6, 0.6), ylabel="amplitud")
+    ax.legend(loc="lower left", fontsize=7.5)
+
+    # Plantilla: 8 recuadros de un símbolo con un chirp simbólico cada uno. En el método 2 la
+    # plantilla es el primero; los demás marcan dónde se toman los otros 7 impulsos
+    xc, yc = _chirp_simbolico()
+    cajas, chirps = [], []
+    for n in range(p.n_upchirps):
+        alpha = 0.35 if metodo == "full" or n == 0 else 0.12
+        cajas.append(
+            ax.add_patch(
+                plt.Rectangle((0, -0.6), p.M, 1.2, fc="C0", ec="C0", alpha=alpha, zorder=3)
+            )
+        )
+        (ch,) = ax.plot(
+            [], [], color="C0", lw=1.3, zorder=4, alpha=1 if metodo == "full" or n == 0 else 0.5
+        )
+        chirps.append(ch)
+
+    # Estadísticos
+    (linea,) = axs[-1].plot([], [], color="k", lw=0.8, label=stat_label)
+    punto = axs[-1].scatter([], [], color="C0", zorder=5)
+    axs[-1].axhline(eta, color="k", ls="--", lw=0.8, label=eta_label)
+    axs[-1].set(
+        ylim=(-0.03 * stat.max(), 1.08 * stat.max()),
+        ylabel=ylabel,
+        xlabel="muestra $k$ (posición de la plantilla)",
+    )
+    axs[-1].legend(loc="upper right", fontsize=7.5)
+    if metodo == "peaks":
+        (linea_y,) = axs[1].plot(
+            [], [], color="k", lw=0.8, label="$|y[k]|^2 = |\\langle r_k, c|_{s=0} \\rangle|^2$"
+        )
+        impulsos = axs[1].scatter([], [], color="C0", zorder=5, s=15)
+        axs[1].set(ylim=(-0.03 * y2.max(), 1.1 * y2.max()), ylabel="$|y[k]|^2$")
+        axs[1].legend(loc="upper right", fontsize=7.5)
+    axs[-1].set_xlim(0, n_x)
+    for a in axs:
+        a.spines[["top", "right"]].set_visible(False)
+    title = axs[0].set_title(f"{titulo}  —  $k$ = 0", fontsize=10)
+    fig.tight_layout()
+
+    def frame(k):
+        title.set_text(f"{titulo}  —  $k$ = {k}")
+        for n, (caja, ch) in enumerate(zip(cajas, chirps)):
+            x0 = k + n * p.M
+            caja.set_x(x0)
+            ch.set_data(x0 + p.M * (0.08 + 0.84 * xc), 0.3 * yc)
+        linea.set_data(np.arange(k + 1), stat[: k + 1])
+        punto.set_offsets([[k, stat[k]]])
+        if metodo == "peaks":
+            fin = k + span - p.M  # Último impulso que suma S[k]
+            linea_y.set_data(np.arange(fin + 1), y2[: fin + 1])
+            pk = k + np.arange(p.n_upchirps) * p.M
+            impulsos.set_offsets(np.column_stack([pk, y2[pk]]))
+
+    FuncAnimation(fig, frame, frames=ks).save(OUT / f"{nombre}.gif", writer=PillowWriter(fps=12.5))
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     sistema()
     canal()
@@ -459,4 +589,6 @@ if __name__ == "__main__":
     busqueda_impulsos()
     demodulacion_preambulo()
     inicio_payload()
+    _recorrido("full")
+    _recorrido("peaks")
     print("Diagramas generados en", OUT)
