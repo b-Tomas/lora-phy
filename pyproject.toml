@@ -9,6 +9,7 @@ dependencies = ["numpy", "matplotlib"]
 dev = ["jupyter", "ruff"]
 # 1.x es para la API de libiio 1.x; el lab usa libiio 0.26
 sdr = ["pyadi-iio", "pylibiio>=0.25,<1"]
+diagramas = ["schemdraw"]
 
 [tool.uv]
 package = false  # Todo el código está en el notebook: no hay paquete para instalar
